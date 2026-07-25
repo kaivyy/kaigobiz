@@ -1,3 +1,30 @@
+# Dependencies
 node_modules/
-graphify-out/
+
+# Build & Dist
+dist/
+out/
+build/
+.next/
+
+# Environment & Sensitive Sessions
+.env
+.env.*
+!.env.example
 .kaigobiz-*.json
+
+# Debug & Temporary Artifacts
+*.png
+*.jpg
+*.jpeg
+*.log
+graphify-out/
+
+# Local Scratch Scripts
+camoufox_gobiz_login.py
+check_otp_details.py
+check_otp_methods.py
+inspect_login_page.py
+login_gobiz.py
+inspect-all-bundles.js
+inspect-bundle.js

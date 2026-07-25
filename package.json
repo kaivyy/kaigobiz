@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && tsup src/widget/kaigobiz-widget.ts --format iife --global-name KaiGoBiz --out-dir dist --minify",
+    "build": "tsc && vite build && tsup src/widget/kaigobiz-widget.ts --format iife --global-name KaiGoBiz --out-dir dist --minify && (cp dist/kaigobiz-widget.global.js dist/kaigobiz.js 2>/dev/null || cp dist/kaigobiz-widget.js dist/kaigobiz.js 2>/dev/null || true)",
     "server": "tsx src/server/index.ts",
     "test": "vitest run"
   },

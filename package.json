@@ -1,0 +1,28 @@
+{
+  "name": "kaigobiz",
+  "version": "1.0.0",
+  "description": "High-performance TypeScript GoBiz/GoPay Payment Gateway & Scraper",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && tsup src/widget/kaigobiz-widget.ts --format iife --global-name KaiGoBiz --out-dir dist --minify",
+    "server": "tsx src/server/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "hono": "^4.6.14",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/qrcode": "^1.5.5",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -55,6 +55,25 @@ describe('FileStorageAdapter', () => {
     expect(txs[0]).toEqual(dummyTx);
   });
 
+  it('should deduplicate transactions when saving identical IDs', async () => {
+    const tx1 = {
+      id: 'tx_dup',
+      amount: 10000,
+      timestamp: new Date().toISOString(),
+      status: 'COMPLETED' as const,
+    };
+    const tx2 = {
+      id: 'tx_dup',
+      amount: 10000,
+      timestamp: new Date().toISOString(),
+      status: 'COMPLETED' as const,
+    };
+
+    await storage.saveTransactions([tx1, tx2]);
+    const txs = await storage.getTransactions();
+    expect(txs).toHaveLength(1);
+  });
+
   it('should save and retrieve payment orders correctly', async () => {
     const dummyOrder = {
       paymentId: 'pay_123',

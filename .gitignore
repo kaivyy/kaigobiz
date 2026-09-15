@@ -12,12 +12,14 @@ build/
 .env.*
 !.env.example
 .kaigobiz-*.json
+.camoufox-profile/
 
 # Debug & Temporary Artifacts
 *.png
 *.jpg
 *.jpeg
 *.log
+*.bin
 graphify-out/
 
 # Local Scratch Scripts

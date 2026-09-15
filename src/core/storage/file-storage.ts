@@ -47,12 +47,37 @@ export class FileStorageAdapter implements StorageAdapter {
     }
   }
 
+  async clearSession(): Promise<boolean> {
+    try {
+      if (fs.existsSync(this.sessionFile)) {
+        fs.unlinkSync(this.sessionFile);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async saveTransaction(tx: TransactionData): Promise<boolean> {
+    return await this.saveTransactions([tx]);
+  }
+
+  async saveTransactions(txs: TransactionData[]): Promise<boolean> {
     try {
       this.ensureDirExists(this.txFile);
-      const txs = await this.getTransactions();
-      txs.unshift(tx);
-      fs.writeFileSync(this.txFile, JSON.stringify(txs.slice(0, 500), null, 2), 'utf-8');
+      const existing = await this.getTransactions();
+      const existingMap = new Map(existing.map((item) => [item.id, item]));
+
+      for (const tx of txs) {
+        existingMap.set(tx.id, tx);
+      }
+
+      // Keep latest transactions first
+      const merged = Array.from(existingMap.values()).sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+
+      fs.writeFileSync(this.txFile, JSON.stringify(merged.slice(0, 500), null, 2), 'utf-8');
       return true;
     } catch {
       return false;
@@ -89,6 +114,10 @@ export class FileStorageAdapter implements StorageAdapter {
   async getPaymentOrder(paymentId: string): Promise<PaymentOrder | null> {
     const orders = await this.getAllOrders();
     return orders.find((o) => o.paymentId === paymentId) || null;
+  }
+
+  async getAllPaymentOrders(): Promise<PaymentOrder[]> {
+    return await this.getAllOrders();
   }
 
   private async getAllOrders(): Promise<PaymentOrder[]> {

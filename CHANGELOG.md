@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-09-15
+
+### ✨ Added
+- **Hosted Checkout Page (`/pay/:paymentId`)**:
+  - Full responsive customer checkout page with live countdown, QRIS image display, auto-refresh status polling, audio payment chimes, and deep links to GoPay / banking apps.
+- **Automated Background Reconciler & Webhooks (`reconciler.ts`)**:
+  - Background worker that polls the GoBiz Wallstreet Journal API every 7 seconds.
+  - Automatic order matching against incoming mutasi by amount and timestamp with clock-skew tolerance.
+  - Instant HTTP POST webhook dispatching upon settlement with customizable `callbackUrl`.
+- **Dual QR Scanning Engine & QRIS Studio**:
+  - Client-side `jsQR` HTML5 Canvas scanner supporting file upload, drag and drop, clipboard paste (`Ctrl+V`), and webcam scanning.
+  - Server-side Python fallback (`decode_qr.py`) powered by `zxingcpp`, `pyzbar`, `opencv-python-headless`, and `pdftoppm` for GoBiz PDF poster extraction.
+- **1-Click Automated Linux VPS Installer (`install.sh`)**:
+  - Unattended installation script handling OS packages, Python QR engines, Node.js 20 LTS, build assets, and PM2 deployment.
+- **Headless API & Custom UI Integration Guide**:
+  - End-to-end integration examples for PHP / Laravel, Node.js / Express, and white-label custom HTML / JavaScript frontend polling.
+- **QRIS Template Management Endpoints**:
+  - Added `GET /api/v1/payment/template` and `POST /api/v1/payment/template` for active merchant template inspection and persistence.
+- **Global and Per-Order Webhook Support**:
+  - Added `GET /api/v1/payment/webhook-config` and `POST /api/v1/payment/webhook-config`.
+
+### 🔄 Changed
+- **Default Port Updated to 3636**:
+  - Migrated default server port from 3001 to 3636 across server core, environment config, installer, and documentation.
+- **GoBiz Wallstreet Minor Currency Normalization**:
+  - Transparently normalizes Gojek minor currency units (sen / cents, factor of 100) to standard Rupiah.
+- **Expanded Test Suite**:
+  - Added integration tests for webhooks, custom callback propagation, and reconciliation matching (26 passing tests).
+
+### 🐛 Fixed
+- **Clipboard Copying on Non-SSL HTTP**:
+  - Implemented `document.execCommand('copy')` fallback in dashboard UI so script tag copying works without HTTPS.
+- **Transparent PNG Decoding**:
+  - Added RGBA alpha-to-white composite pre-processing to prevent QR matrix corruption on transparent PNG uploads.
+
+---
+
 ## [1.0.0] - 2026-07-25
 
 ### ✨ Added

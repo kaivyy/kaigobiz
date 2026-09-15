@@ -1,39 +1,120 @@
+/* Modern Fintech Slate Embeddable Checkout Widget */
 .kaigobiz-modal-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(8px);
+  background: rgba(11, 15, 25, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 99999;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  z-index: 999999;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  padding: 16px;
+  -webkit-font-smoothing: antialiased;
 }
+
 .kaigobiz-modal-card {
-  background: #1e293b;
+  background-color: #111827;
   color: #f8fafc;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  width: 90%;
-  max-width: 380px;
-  padding: 24px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
-  text-align: center;
-}
-.kaigobiz-qr-box {
-  background: #ffffff;
-  padding: 12px;
+  border: 1px solid #1e293b;
   border-radius: 12px;
-  display: inline-block;
-  margin: 16px 0;
+  width: 100%;
+  max-width: 360px;
+  padding: 24px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.6);
+  text-align: center;
+  position: relative;
 }
+
+.kaigobiz-modal-header {
+  margin-bottom: 12px;
+}
+
+.kaigobiz-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: -0.01em;
+}
+
+.kaigobiz-order-id {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
 .kaigobiz-amount {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
   color: #38bdf8;
-  margin: 8px 0;
+  letter-spacing: -0.02em;
+  margin: 12px 0;
 }
-.kaigobiz-timer {
-  font-size: 14px;
+
+.kaigobiz-qr-box {
+  background-color: #ffffff;
+  padding: 12px;
+  border-radius: 8px;
+  display: inline-block;
+  margin: 8px 0 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.kaigobiz-instructions {
+  font-size: 12px;
   color: #94a3b8;
+  line-height: 1.4;
+  margin-bottom: 16px;
+}
+
+.kaigobiz-timer-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background-color: #0b1120;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+}
+
+.kaigobiz-timer-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
+.kaigobiz-timer {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.kaigobiz-close-button {
+  width: 100%;
+  height: 40px;
+  background-color: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.kaigobiz-close-button:hover {
+  background-color: #334155;
+}
+
+.kaigobiz-close-button:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
 }

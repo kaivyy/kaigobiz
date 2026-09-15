@@ -38,6 +38,20 @@ describe('QRIS Generator', () => {
     it('should return empty string if empty template provided', () => {
       expect(generateDynamicQRIS('', 10000)).toBe('');
     });
+
+    it('should throw error when non-positive or invalid amount is provided', () => {
+      const template = '0002010102115802ID6304ABCD';
+      expect(() => generateDynamicQRIS(template, 0)).toThrow('Invalid amount');
+      expect(() => generateDynamicQRIS(template, -500)).toThrow('Invalid amount');
+      expect(() => generateDynamicQRIS(template, NaN)).toThrow('Invalid amount');
+    });
+
+    it('should preserve template structure and inject Tag 54 before 5802', () => {
+      const template = '0002010102115802ID5913MERCHANT NAME6007JAKARTA6304ABCD';
+      const dynamicQRIS = generateDynamicQRIS(template, 20000);
+      expect(dynamicQRIS).toContain('010211');
+      expect(dynamicQRIS).toContain('5405200005802ID');
+    });
   });
 
   describe('generateQRCodeDataURL', () => {

@@ -3,140 +3,458 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KaiGoBiz Payment Gateway Dashboard</title>
+  <title>KaiGoBiz - Merchant Payment Gateway</title>
   <link rel="stylesheet" href="./style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="background-glow"></div>
-  
   <div class="app-container">
-    <!-- Navbar -->
-    <header class="navbar">
-      <div class="brand">
-        <div class="logo-icon">⚡</div>
-        <div class="brand-text">
-          <h1>KaiGoBiz</h1>
-          <span class="subtitle">GoBiz Payment Gateway & Scraper</span>
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="nav-brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="14" x="2" y="5" rx="2"/>
+            <line x1="2" x2="22" y1="10" y2="10"/>
+            <path d="M6 15h.01"/>
+            <path d="M10 15h.01"/>
+          </svg>
+        </div>
+        <div class="brand-meta">
+          <div class="brand-title-row">
+            <span class="brand-name">KaiGoBiz</span>
+            <span class="version-tag">v1.0</span>
+          </div>
+          <span class="brand-desc">GoBiz Gateway &amp; Scraper Infrastructure</span>
         </div>
       </div>
-      <div class="status-wrapper">
-        <div id="status-badge" class="badge offline">
-          <span class="dot"></span>
-          <span class="text">Offline</span>
+
+      <!-- Navigation Tabs (QRIS Studio is placed first) -->
+      <nav class="nav-tabs" role="tablist" aria-label="Navigasi Utama">
+        <button class="nav-tab active" id="tab-btn-qris" role="tab" aria-selected="true" aria-controls="panel-qris" data-tab="qris">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect width="5" height="5" x="3" y="3" rx="1"/>
+            <rect width="5" height="5" x="16" y="3" rx="1"/>
+            <rect width="5" height="5" x="3" y="16" rx="1"/>
+            <path d="M21 16h-3a2 2 0 0 0-2 2v3"/>
+            <path d="M12 7v3a2 2 0 0 1-2 2H7"/>
+            <path d="M3 12h.01"/>
+            <path d="M12 3h.01"/>
+            <path d="M16 12h1"/>
+          </svg>
+          <span>QRIS Studio</span>
+        </button>
+
+        <button class="nav-tab" id="tab-btn-transactions" role="tab" aria-selected="false" aria-controls="panel-transactions" data-tab="transactions">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 3v18h18"/>
+            <path d="m19 9-5 5-4-4-3 3"/>
+          </svg>
+          <span>Mutasi Transaksi</span>
+          <span class="tab-badge" id="tx-count-badge">0</span>
+        </button>
+
+        <button class="nav-tab" id="tab-btn-session" role="tab" aria-selected="false" aria-controls="panel-session" data-tab="session">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+          <span>Sesi GoBiz</span>
+        </button>
+      </nav>
+
+      <!-- Right System Status Indicators -->
+      <div class="nav-controls">
+        <button class="pill-btn endpoint-pill" id="copy-widget-url-btn" type="button" title="Salin tag script widget">
+          <span class="code-tag">&lt;/&gt; kaigobiz.js</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+          </svg>
+        </button>
+
+        <div class="status-pill offline" id="system-status-badge">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <span class="status-text" id="system-status-text">Memeriksa</span>
         </div>
       </div>
     </header>
 
-    <!-- Main Grid -->
-    <main class="grid">
-      <!-- Session & Auth Card -->
-      <section class="card glass">
-        <div class="card-header">
-          <div class="card-icon auth-icon">🔐</div>
-          <div>
-            <h2>Auth & Sesi GoBiz</h2>
-            <p class="card-desc">Kelola otentikasi sesi merchant GoBiz via OTP</p>
-          </div>
+    <!-- Executive Metrics Ribbon (Real Data Only) -->
+    <section class="metrics-ribbon" aria-label="Statistik Utama">
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Volume Diterima</span>
+          <span class="metric-sub">Sukses</span>
         </div>
+        <div class="metric-value" id="stat-total-volume">Rp 0</div>
+      </div>
 
-        <div id="session-info" class="session-info-box">
-          <div class="loading-spinner"></div> Memuat status sesi...
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Mutasi Tercatat</span>
+          <span class="metric-sub" id="stat-success-ratio">0 Berhasil</span>
         </div>
+        <div class="metric-value" id="stat-tx-count">0</div>
+      </div>
 
-        <div id="otp-message" class="message-banner" style="display:none;"></div>
-
-        <!-- Request OTP Form -->
-        <form id="otp-request-form" class="form-group">
-          <label for="phone-input">Nomor Handphone GoBiz</label>
-          <div class="input-wrapper">
-            <span class="input-icon">📱</span>
-            <input type="text" id="phone-input" placeholder="08123456789 atau 628123456789" required />
-          </div>
-          <button type="submit" id="btn-request-otp" class="btn primary">
-            <span>Kirim Kode OTP</span>
-            <span class="arrow">→</span>
-          </button>
-        </form>
-
-        <!-- Verify OTP Form -->
-        <form id="otp-verify-form" class="form-group" style="display:none;">
-          <label for="otp-input">Kode OTP (6 Digit)</label>
-          <div class="input-wrapper">
-            <span class="input-icon">🔑</span>
-            <input type="text" id="otp-input" placeholder="123456" maxlength="6" required />
-          </div>
-          <div class="button-row">
-            <button type="submit" id="btn-verify-otp" class="btn success">Verifikasi OTP</button>
-            <button type="button" id="btn-cancel-otp" class="btn secondary">Batal</button>
-          </div>
-        </form>
-      </section>
-
-      <!-- Playground Card -->
-      <section class="card glass">
-        <div class="card-header">
-          <div class="card-icon qris-icon">📱</div>
-          <div>
-            <h2>Dynamic QRIS Playground</h2>
-            <p class="card-desc">Simulasi generate QRIS & test widget checkout</p>
-          </div>
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Sesi Merchant</span>
+          <span class="metric-sub" id="stat-session-status">Offline</span>
         </div>
+        <div class="metric-value truncate" id="stat-outlet-name">Belum Terhubung</div>
+      </div>
 
-        <form id="create-payment-form" class="form-group">
-          <label for="order-id-input">Order ID</label>
-          <div class="input-wrapper">
-            <span class="input-icon">🏷️</span>
-            <input type="text" id="order-id-input" placeholder="INV-20260725-01" required />
-          </div>
-
-          <label for="amount-input">Nominal Pembayaran (Rp)</label>
-          <div class="input-wrapper">
-            <span class="input-icon">💰</span>
-            <input type="number" id="amount-input" placeholder="50000" min="1000" step="1000" required />
-          </div>
-
-          <button type="submit" id="btn-test-checkout" class="btn accent">
-            <span>Test Checkout Widget</span>
-            <span class="sparkle">✨</span>
-          </button>
-        </form>
-
-        <div class="quick-preset-container">
-          <span class="preset-label">Quick Nominal:</span>
-          <button type="button" class="btn-preset" data-amount="10000">Rp 10.000</button>
-          <button type="button" class="btn-preset" data-amount="25000">Rp 25.000</button>
-          <button type="button" class="btn-preset" data-amount="50000">Rp 50.000</button>
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-label">Algoritma Gateway</span>
+          <span class="metric-sub">EMVCo CRC16</span>
         </div>
-      </section>
+        <div class="metric-value highlight" id="stat-gateway-latency">&lt; 5 ms</div>
+      </div>
+    </section>
 
-      <!-- Mutasi Transactions Table Card -->
-      <section class="card glass full-width">
-        <div class="card-header space-between">
-          <div class="header-left">
-            <div class="card-icon tx-icon">📊</div>
-            <div>
-              <h2>Riwayat Mutasi Transaksi</h2>
-              <p class="card-desc">Data transaksi real-time dari scraper/session GoBiz</p>
+    <!-- TAB 1: Dynamic QRIS Studio (Placed first) -->
+    <section class="tab-panel active" id="panel-qris" role="tabpanel" aria-labelledby="tab-btn-qris">
+      <div class="studio-layout">
+        <!-- Studio Form Column -->
+        <div class="card studio-form-card">
+          <div class="section-title">
+            <h2>Konfigurasi Pembayaran</h2>
+            <p class="section-sub">Generate payload QRIS dinamis berstandar nasional EMVCo.</p>
+          </div>
+
+          <!-- Static QRIS Template Configuration Card / Box -->
+          <div class="template-config-box" id="template-config-box">
+            <div class="template-header">
+              <div class="template-title-col">
+                <span class="template-title">Template QRIS Statis Merchant</span>
+                <span class="template-badge dummy" id="template-status-badge">Template Bawaan (Dummy)</span>
+              </div>
+              <button type="button" class="text-action-btn" id="btn-toggle-template-edit">Ganti / Perbarui</button>
+            </div>
+
+            <!-- Active Template Info Banner -->
+            <div class="template-banner warning" id="template-warning-banner">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              <div class="template-banner-text">
+                <strong>Peringatan Kode QR:</strong> Template bawaan menggunakan ID dummy <em>KAI GOBIZ SHOP</em>. Aplikasi m-Banking (BCA, Mandiri, GoPay) akan menolak dengan pesan <em>"Kode QR tidak sah"</em> jika discan langsung. Silakan masukkan QRIS Statis asli GoBiz Anda di bawah ini agar transaksi riil dapat diproses.
+              </div>
+            </div>
+
+            <div class="template-details-row" id="template-details-row" style="display:none;">
+              <span class="detail-tag" id="tpl-merchant-name">Merchant: -</span>
+              <span class="detail-tag" id="tpl-merchant-nmid">NMID: -</span>
+              <span class="detail-tag" id="tpl-merchant-city">Kota: -</span>
+            </div>
+
+            <!-- Expandable Template Form -->
+            <div class="template-form-collapsible" id="template-form-collapsible" style="display:none;">
+              <div class="field-block" style="margin-top: 10px;">
+                <label for="template-string-input">String Payload QRIS Statis Asli (Diawali 000201...)</label>
+                <div class="input-wrapper">
+                  <textarea id="template-string-input" rows="3" placeholder="Tempel string QRIS statis GoBiz di sini..."></textarea>
+                </div>
+              </div>
+
+              <div class="template-actions-row">
+                <input type="file" id="qris-image-file" accept="image/*,.pdf,application/pdf" style="display:none;" />
+                <button type="button" class="btn outline small" id="btn-upload-qr-img">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
+                    <circle cx="9" cy="9" r="2"/>
+                    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+                  </svg>
+                  <span>Unggah Gambar / PDF QRIS</span>
+                </button>
+
+                <button type="button" class="btn primary small" id="btn-save-template">
+                  <span>Simpan &amp; Aktifkan</span>
+                </button>
+              </div>
             </div>
           </div>
-          <button id="refresh-tx-btn" class="btn outline small">
-            <span class="refresh-icon">🔄</span>
-            <span>Refresh Mutasi</span>
-          </button>
+
+          <form id="create-payment-form" class="studio-form">
+            <div class="field-block">
+              <div class="field-header">
+                <label for="order-id-input">Order ID Transaksi</label>
+                <button type="button" class="text-action-btn" id="btn-random-order">Buat Acak</button>
+              </div>
+              <div class="input-wrapper">
+                <span class="field-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/>
+                    <path d="M8 7h8"/>
+                    <path d="M8 11h8"/>
+                  </svg>
+                </span>
+                <input type="text" id="order-id-input" placeholder="INV-20260915-01" required />
+              </div>
+            </div>
+
+            <div class="field-block">
+              <label for="amount-input">Nominal Pembayaran (Rp)</label>
+              <div class="input-wrapper">
+                <span class="field-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="20" height="14" x="2" y="5" rx="2"/>
+                    <line x1="2" x2="22" y1="10" y2="10"/>
+                  </svg>
+                </span>
+                <input type="number" id="amount-input" placeholder="50000" min="1000" step="1000" required />
+              </div>
+              <div class="preset-row">
+                <button type="button" class="btn-preset" data-amount="10000">10k</button>
+                <button type="button" class="btn-preset" data-amount="25000">25k</button>
+                <button type="button" class="btn-preset" data-amount="50000">50k</button>
+                <button type="button" class="btn-preset" data-amount="100000">100k</button>
+                <button type="button" class="btn-preset" data-amount="250000">250k</button>
+              </div>
+            </div>
+
+            <div class="field-block">
+              <label for="expiry-select">Batas Waktu Pembayaran</label>
+              <div class="input-wrapper">
+                <span class="field-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                </span>
+                <select id="expiry-select">
+                  <option value="5">5 Menit (Standar Retail)</option>
+                  <option value="10">10 Menit</option>
+                  <option value="15">15 Menit</option>
+                  <option value="30">30 Menit</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-actions-stack">
+              <button type="submit" id="btn-generate-qris" class="btn primary full-width">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="5" height="5" x="3" y="3" rx="1"/>
+                  <rect width="5" height="5" x="16" y="3" rx="1"/>
+                  <rect width="5" height="5" x="3" y="16" rx="1"/>
+                  <path d="M21 16h-3a2 2 0 0 0-2 2v3"/>
+                  <path d="M12 7v3a2 2 0 0 1-2 2H7"/>
+                </svg>
+                <span>Generate &amp; Perbarui Preview</span>
+              </button>
+
+              <button type="button" id="btn-launch-widget" class="btn secondary full-width">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/>
+                  <line x1="10" x2="21" y1="14" y2="3"/>
+                </svg>
+                <span>Uji Widget Modal Checkout</span>
+              </button>
+            </div>
+          </form>
         </div>
 
-        <div id="tx-table-container" class="table-container">
-          <div class="loading-state">
-            <div class="spinner"></div>
-            <span>Memuat data transaksi...</span>
+        <!-- Studio Live Preview Column -->
+        <div class="card studio-preview-card">
+          <div class="preview-header">
+            <div>
+              <span class="preview-badge">Live Preview</span>
+              <h3 class="preview-title" id="preview-order-label">INV-PREVIEW</h3>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div class="preview-timer-badge" id="preview-timer-badge" style="display: none;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span id="preview-timer-text">--:--</span>
+              </div>
+              <div class="status-tag pending" id="preview-status-tag">Siap Dipindai</div>
+            </div>
+          </div>
+
+          <div class="qr-display-center">
+            <div class="qr-canvas-frame">
+              <img id="preview-qr-image" src="" alt="Pratinjau Kode QRIS" width="200" height="200" />
+              <div class="qr-placeholder" id="preview-qr-placeholder">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="5" height="5" x="3" y="3" rx="1"/>
+                  <rect width="5" height="5" x="16" y="3" rx="1"/>
+                  <rect width="5" height="5" x="3" y="16" rx="1"/>
+                  <path d="M21 16h-3a2 2 0 0 0-2 2v3"/>
+                  <path d="M12 7v3a2 2 0 0 1-2 2H7"/>
+                </svg>
+                <span>Klik Generate untuk Membuat QRIS</span>
+              </div>
+            </div>
+            <div class="preview-amount-display" id="preview-amount-label">Rp 50.000</div>
+            <p class="preview-note">Mendukung GoPay, BCA, Mandiri, ShopeePay, Dana, &amp; OVO</p>
+          </div>
+
+          <div class="preview-actions">
+            <button class="btn outline small" id="btn-copy-payload" type="button" disabled>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+              </svg>
+              <span>Salin Payload String</span>
+            </button>
+
+            <button class="btn outline small" id="btn-download-qr" type="button" disabled>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" x2="12" y1="15" y2="3"/>
+              </svg>
+              <span>Unduh PNG</span>
+            </button>
+
+            <a class="btn primary small" id="btn-open-checkout" href="#" target="_blank" style="display: none;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" x2="21" y1="14" y2="3"/>
+              </svg>
+              <span>Halaman Bayar</span>
+            </a>
+          </div>
+
+          <!-- Collapsible Raw Payload Inspector -->
+          <details class="payload-inspector">
+            <summary>Lihat Spesifikasi Payload EMVCo (CRC16)</summary>
+            <pre class="raw-code" id="preview-raw-string">Payload belum digenerate</pre>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: Mutasi Transaksi (Ledger View) -->
+    <section class="tab-panel" id="panel-transactions" role="tabpanel" aria-labelledby="tab-btn-transactions">
+      <div class="card panel-card">
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <div class="search-box">
+              <span class="search-icon" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8"/>
+                  <path d="m21 21-4.3-4.3"/>
+                </svg>
+              </span>
+              <input type="text" id="tx-search-input" placeholder="Cari ID transaksi atau deskripsi..." autocomplete="off" />
+            </div>
+
+            <div class="filter-group" role="group" aria-label="Filter Status Transaksi">
+              <button class="filter-btn active" data-filter="ALL" type="button">Semua</button>
+              <button class="filter-btn" data-filter="COMPLETED" type="button">Berhasil</button>
+              <button class="filter-btn" data-filter="PENDING" type="button">Pending</button>
+              <button class="filter-btn" data-filter="FAILED" type="button">Gagal</button>
+            </div>
+          </div>
+
+          <div class="toolbar-right">
+            <button class="btn outline small" id="refresh-tx-btn" type="button">
+              <svg class="icon-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                <path d="M21 3v5h-5"/>
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                <path d="M8 16H3v5"/>
+              </svg>
+              <span>Segarkan Mutasi</span>
+            </button>
           </div>
         </div>
-      </section>
-    </main>
+
+        <div class="table-wrapper" id="tx-table-container">
+          <div class="loading-state">
+            <div class="spinner" aria-hidden="true"></div>
+            <span>Memuat rekaman mutasi...</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Manajemen Sesi GoBiz -->
+    <section class="tab-panel" id="panel-session" role="tabpanel" aria-labelledby="tab-btn-session">
+      <div class="studio-layout">
+        <!-- Session Status & Details -->
+        <div class="card">
+          <div class="section-title">
+            <h2>Informasi Sesi GoBiz</h2>
+            <p class="section-sub">Status autentikasi OAuth2 dan kredensial merchant aktif.</p>
+          </div>
+
+          <div class="session-detail-container" id="session-info-details">
+            <div class="loading-state">
+              <div class="spinner" aria-hidden="true"></div>
+              <span>Memeriksa status sesi...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Login / Request OTP Card -->
+        <div class="card">
+          <div class="section-title">
+            <h2>Masuk ke Akun GoBiz</h2>
+            <p class="section-sub">Hubungkan akun merchant GoFood/GoPay via nomor ponsel.</p>
+          </div>
+
+          <div id="otp-message" class="message-banner" style="display:none;"></div>
+
+          <form id="otp-request-form" class="studio-form">
+            <div class="field-block">
+              <label for="phone-input">Nomor Handphone Terdaftar</label>
+              <div class="input-wrapper">
+                <span class="field-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="14" height="20" x="5" y="2" rx="2" ry="2"/>
+                    <path d="M12 18h.01"/>
+                  </svg>
+                </span>
+                <input type="text" id="phone-input" placeholder="08123456789 atau 628123456789" required autocomplete="tel" />
+              </div>
+            </div>
+
+            <button type="submit" id="btn-request-otp" class="btn primary full-width">
+              <span>Minta Kode OTP</span>
+            </button>
+          </form>
+
+          <!-- OTP Verification Box -->
+          <form id="otp-verify-form" class="studio-form verify-box" style="display:none;">
+            <div class="field-block">
+              <label for="otp-input">Masukkan Kode OTP (4-6 Digit)</label>
+              <div class="input-wrapper">
+                <span class="field-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="7.5" cy="15.5" r="5.5"/>
+                    <path d="m21 2-9.6 9.6"/>
+                    <path d="m15.5 7.5 3 3L22 7l-3-3"/>
+                  </svg>
+                </span>
+                <input type="text" id="otp-input" placeholder="1911" minlength="4" maxlength="6" pattern="[0-9]{4,6}" inputmode="numeric" required autocomplete="one-time-code" />
+              </div>
+            </div>
+
+            <div class="button-row">
+              <button type="submit" id="btn-verify-otp" class="btn success" style="flex: 1;">Verifikasi &amp; Simpan Sesi</button>
+              <button type="button" id="btn-cancel-otp" class="btn secondary">Batal</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
   </div>
+
+  <!-- Global Toast Notification -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
   <script type="module" src="./app.ts"></script>
 </body>

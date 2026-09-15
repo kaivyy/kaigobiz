@@ -1,89 +1,202 @@
-# 🚀 KaiGoBiz Payment Gateway & Scraper
+# KaiGoBiz Payment Gateway & Scraper
 
-> **High-Performance TypeScript GoBiz/GoPay Payment Gateway & Scraper**  
-> Built with Hono.js, Dynamic QRIS Generator (EMVCo CRC16), Pluggable Storage Adapters, Embeddable Payment Widget (`kaigobiz.js`), and Modern Glassmorphism Dashboard UI.
-
----
-
-## ⚡ Features
-
-- 🚀 **Ultra-Fast & Lightweight**: Built on Hono.js with native HTTP REST API calls (< 1ms overhead, zero browser dependency).
-- 🔒 **TypeScript Native**: 100% strict type safety for APIs, Session Data, QRIS payloads, and Mutasi events.
-- 💳 **Dynamic QRIS Generator**: Generates custom-amount QRIS payments using EMVCo CRC16 checksum calculation.
-- 📱 **Embeddable Payment Widget**: Instant checkout modal (`kaigobiz.js` ~15KB) that integrates into any website with **just 1 line of script**.
-- 🔄 **Auto Session Refresh**: Background auto-renewal of `access_token` via `refresh_token` without re-login interrupts.
-- 💾 **Pluggable Storage System**:
-  - `FileStorageAdapter` (Default: Local JSON / SQLite)
-  - `CloudflareD1StorageAdapter` (Optional: Free Cloudflare D1 Cloud Sync)
-- 🎨 **Modern Dashboard UI**: Built-in Dark Mode & Glassmorphism Web Admin to manage OTP auth, test QRIS, and view mutasi transactions.
+High-performance TypeScript GoBiz and GoPay Payment Gateway, Scraper, and Dynamic QRIS Generator. Built with Hono.js, EMVCo CRC16 engine, real-time GoBiz Journal mutasi reconciliation, embeddable checkout widget (`kaigobiz.js`), and hosted payment page.
 
 ---
 
-## 🛠️ Tech Stack
+## Key Highlights
 
-- **Core & Server:** TypeScript 5.x, Hono.js, `@hono/node-server`, Axios, QRCode
-- **Build & Bundler:** Vite, tsup, Vitest, PM2
-- **UI & Widget:** HTML5, Vanilla CSS Modern (Glassmorphism, CSS Variables, Backdrop Blur)
+- **Dynamic QRIS Generator**: Generates custom-amount QRIS payments instantly from any static GoBiz QRIS template using EMVCo Tag 54 injection and CRC16 CCITT recalculation.
+- **Auto Reconciliation**: Background reconciler polls the GoBiz Wallstreet Journal API, matches transactions, normalizes Gojek sen units (minor currency x100), and marks payments as `PAID`.
+- **Three Integration Modes**:
+  1. **Hosted Checkout Page** (`/pay/:paymentId`): Pre-built responsive payment page with QRIS code, live countdown, auto-polling, and direct banking app deep links.
+  2. **Embeddable Modal Widget** (`kaigobiz.js`): Lightweight (~15KB) modal popup script that works on any website with a single `<script>` tag.
+  3. **Headless REST API**: Full JSON API for custom mobile apps, e-commerce backends, and headless checkouts.
+- **Webhook Dispatcher**: Instant HTTP POST notifications to your backend or e-commerce store when a customer completes payment.
+- **QRIS Studio**: Extract your merchant QRIS template directly via client-side `jsQR` (HTML5 Canvas), clipboard paste (`Ctrl+V`), camera scanner, or multi-engine server upload (`zxingcpp`, `pyzbar`, `OpenCV`, and PDF posters via `pdftoppm`).
+- **Modern Dashboard**: Manage GoBiz SMS OTP login, test payments, monitor live mutasi transactions, and configure webhooks with dark mode glassmorphism UI.
 
 ---
 
-## 🚀 Quick Start
+## Architecture & Payment Flow
 
-### 1. Installation
+```
+Customer                    Your Web Store / App               KaiGoBiz Server                   GoBiz / GoPay
+   |                                 |                                |                                |
+   | 1. Checkout (Rp 50.000)        |                                |                                |
+   |-------------------------------->|                                |                                |
+   |                                 | 2. POST /api/v1/payment/create |                                |
+   |                                 |------------------------------->|                                |
+   |                                 |                                | Generate Dynamic QRIS (CRC16)  |
+   |                                 | 3. Returns paymentId & URL     | Save order (status: PENDING)   |
+   |                                 |<-------------------------------|                                |
+   | 4. Show Widget or Redirect to   |                                |                                |
+   |    /pay/:paymentId              |                                |                                |
+   |<--------------------------------|                                |                                |
+   |                                                                  |                                |
+   | 5. Scans QRIS & Pays via GoPay / BCA / Dana / ShopeePay / etc.  |                                |
+   |=================================================================>|                                |
+   |                                                                  | 6. Background Reconciler polls  |
+   |                                                                  |    Wallstreet Journal API      |
+   |                                                                  |<==============================>|
+   |                                                                  | Match amount & timestamp       |
+   |                                                                  | Mark order as PAID             |
+   | 7. UI updates to "PAID" instantly (via auto-polling)             |                                |
+   |<-----------------------------------------------------------------|                                |
+   |                                 | 8. Webhook POST (payment.paid) |                                |
+   |                                 |<-------------------------------|                                |
+```
+
+---
+
+## Requirements
+
+- **Node.js**: v18.0.0 or higher
+- **Package Manager**: `npm` or `pnpm`
+- **Python 3** (optional, used for server-side QR image and PDF extraction fallback):
+  - `pip3 install zxing-cpp pyzbar opencv-python-headless pillow pillow-heif numpy`
+  - `apt-get install -y poppler-utils` (for GoBiz PDF poster decoding)
+
+---
+
+## Quick Start
+
+### Option A: 1-Click Automated Installer (Recommended for VPS)
+
+Run the installer script to automatically install all system packages, Python QR engines, Node dependencies, build the frontend, and start PM2:
 
 ```bash
-cd /root/kaigobiz
+# Direct run from cloned folder
+./install.sh
+
+# Or 1-line install directly from GitHub
+curl -fsSL https://raw.githubusercontent.com/kaivyy/kaigobiz/main/install.sh | bash
+```
+
+---
+
+### Option B: Manual Installation
+
+#### 1. Clone & Install Dependencies
+
+```bash
+git clone https://github.com/kaivyy/kaigobiz.git
+cd kaigobiz
 npm install
 ```
 
-### 2. Configuration (`.env`)
+#### 2. Configuration (`.env`)
 
-Create a `.env` file in the root directory (optional, sensible defaults provided):
+Create a `.env` file in the root directory:
 
 ```env
-PORT=3000
+PORT=3636
 NODE_ENV=production
-STATIC_QRIS_TEMPLATE=00020101021226580014ID.GO-JEK.WWW01189360091430000000005204581253033605802ID5913KAI GOBIZ SHOP6007JAKARTA6304ABCD
+# Optional default webhook URL
+WEBHOOK_URL=https://your-domain.com/api/payment-webhook
+# Optional default QRIS template (can also be configured via Dashboard)
+STATIC_QRIS_TEMPLATE=00020101021126610014COM.GO-JEK.WWW...6304EB1B
 ```
 
 ### 3. Build & Run
 
 ```bash
-# Build production bundle and widget
+# Build frontend dashboard and embeddable widget
 npm run build
 
-# Start production server (Node.js)
+# Start the server (development or test run)
 npm run server
 
-# Or run with PM2 background process
+# Or run continuously in background via PM2
 pm2 start "npm run server" --name kaigobiz
 ```
 
+Access the Web Dashboard at: `http://localhost:3636`
+
 ---
 
-## 📱 How to Integrate Widget into Your Website
+## Merchant Setup & QRIS Studio
 
-Integrating KaiGoBiz into your e-commerce or custom website takes just **1 line of JavaScript**:
+1. Open the Dashboard at `http://localhost:3636`.
+2. **Login to GoBiz**:
+   - Go to **Akun GoBiz**.
+   - Enter your registered GoBiz phone number (e.g., `08123456789`).
+   - Submit the SMS OTP received on your device.
+   - Sesi and token are saved securely in `.kaigobiz-session.json` and auto-refreshed in the background.
+3. **Set Up QRIS Template**:
+   - Go to **QRIS Studio**.
+   - Either paste your static QRIS string directly, paste a screenshot with `Ctrl+V`, upload your GoBiz QRIS photo / PDF poster, or use the camera scanner.
+   - Click **Simpan Template**. The template is validated and saved to `.kaigobiz-config.json`.
+
+---
+
+## Integration Guide
+
+### Method 1: Hosted Checkout Page (Recommended)
+
+Redirect customers to the pre-hosted checkout URL. This is the simplest and most secure method, similar to Midtrans Snap or Stripe Checkout.
+
+#### 1. Create Payment on Your Backend
+
+```bash
+curl -X POST http://localhost:3636/api/v1/payment/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "orderId": "INV-2026-001",
+    "amount": 50000,
+    "expiryMinutes": 10,
+    "callbackUrl": "https://yourshop.com/webhook"
+  }'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "paymentId": "pay_1753470123456_a9b8c",
+  "orderId": "INV-2026-001",
+  "amount": 50000,
+  "qrisString": "00020101021226610014COM.GO-JEK.WWW...540550000...6304A1B2",
+  "qrisQrUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...",
+  "checkoutUrl": "http://localhost:3636/pay/pay_1753470123456_a9b8c",
+  "expiresAt": "2026-09-15T11:30:00.000Z",
+  "callbackUrl": "https://yourshop.com/webhook"
+}
+```
+
+#### 2. Redirect Customer
+
+Redirect your customer's browser to `checkoutUrl`. The page handles QR code display, live countdown, auto-refreshing payment status, and audio cues upon payment completion.
+
+---
+
+### Method 2: Embeddable Modal Widget (`kaigobiz.js`)
+
+Keep customers on your website with an in-page modal dialog.
+
+Include the widget script in your HTML:
 
 ```html
-<!-- Include KaiGoBiz Widget Script -->
-<script src="http://localhost:3000/kaigobiz.js"></script>
+<!-- Load KaiGoBiz Widget -->
+<script src="http://localhost:3636/kaigobiz.js"></script>
+
+<button id="pay-btn" type="button">Bayar Sekarang</button>
 
 <script>
-  // Trigger checkout modal on button click
   document.getElementById('pay-btn').addEventListener('click', () => {
     KaiGoBiz.checkout({
-      endpoint: "http://localhost:3000",
-      orderId: "INV-2026-001",
-      amount: 50000,
+      endpoint: "http://localhost:3636",
+      orderId: "INV-2026-002",
+      amount: 25000,
       onSuccess: (payment) => {
-        alert("Payment Successful! Order: " + payment.orderId);
+        alert("Pembayaran berhasil untuk order " + payment.orderId);
+        window.location.href = "/order/thank-you";
       },
       onExpired: () => {
-        alert("Payment time expired.");
+        alert("Waktu pembayaran telah habis. Silakan buat pesanan baru.");
       },
       onError: (err) => {
-        console.error("Payment error:", err);
+        console.error("Gagal memulai pembayaran:", err);
       }
     });
   });
@@ -92,98 +205,314 @@ Integrating KaiGoBiz into your e-commerce or custom website takes just **1 line 
 
 ---
 
-## 📡 REST API Documentation
+### Method 3: Headless API & Custom UI (100% White-Label)
 
-### 1. Auth & Session
+If you do not want to use the pre-built hosted checkout page or modal widget, you can render a completely custom payment UI on your own website. KaiGoBiz returns raw QR data and base64 images that you can embed anywhere.
 
-#### `GET /api/v1/auth/status`
-Checks current GoBiz session connection and token validity.
+#### Step 1: Create Payment on Backend
 
-```json
-{
-  "connected": true,
-  "session": {
-    "phone_number": "6281234567890",
-    "outlet_name": "KaiGoBiz Shop",
-    "merchant_id": "M-123456",
-    "expires_at": "2026-07-26T18:00:00.000Z"
+##### PHP / Laravel Example
+```php
+<?php
+
+$payload = [
+    'orderId' => 'INV-' . time(),
+    'amount' => 75000,
+    'expiryMinutes' => 15,
+    'callbackUrl' => 'https://tokoanda.com/api/payment-callback'
+];
+
+$ch = curl_init('http://localhost:3636/api/v1/payment/create');
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+
+$response = curl_exec($ch);
+curl_close($ch);
+
+$data = json_decode($response, true);
+
+// Pass $data['paymentId'] and $data['qrisQrUrl'] to your frontend Blade view
+```
+
+##### Node.js / Express Example
+```javascript
+import axios from 'axios';
+
+app.post('/api/checkout', async (req, res) => {
+  try {
+    const response = await axios.post('http://localhost:3636/api/v1/payment/create', {
+      orderId: `ORDER-${Date.now()}`,
+      amount: req.body.totalAmount,
+      expiryMinutes: 10,
+      callbackUrl: 'https://myshop.com/api/webhook'
+    });
+
+    res.json({
+      paymentId: response.data.paymentId,
+      qrisQrUrl: response.data.qrisQrUrl,
+      expiresAt: response.data.expiresAt
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Gagal membuat pembayaran' });
   }
-}
+});
 ```
 
-#### `POST /api/v1/auth/request-otp`
-Requests GoBiz OTP code sent via SMS.
+#### Step 2: Render Custom UI & Poll Status on Frontend
 
-**Body:**
-```json
-{
-  "phone": "081234567890"
-}
-```
+Render the QR code directly using the returned `qrisQrUrl` (Base64 data URL) and poll payment status every 3 seconds:
 
-#### `POST /api/v1/auth/verify-otp`
-Verifies OTP code and initializes session.
+```html
+<!-- Custom Store Checkout View -->
+<div class="custom-checkout-card">
+  <h3>Pembayaran QRIS #INV-10023</h3>
+  <div class="price">Rp 75.000</div>
 
-**Body:**
-```json
-{
-  "phone": "081234567890",
-  "otp": "123456",
-  "otpToken": "TOKEN_FROM_REQUEST_OTP"
-}
+  <!-- Render Base64 QRIS Image -->
+  <img id="qris-img" src="" alt="Kode QRIS" width="220" />
+
+  <p>Pindai menggunakan aplikasi GoPay, BCA, OVO, Dana, atau mobile banking apa saja.</p>
+  <div id="payment-status">Menunggu pembayaran...</div>
+</div>
+
+<script>
+  const paymentId = "PAYMENT_ID_FROM_BACKEND";
+  const qrisQrUrl = "QRIS_QR_URL_FROM_BACKEND";
+
+  // Display QR code image
+  document.getElementById('qris-img').src = qrisQrUrl;
+
+  // Poll status every 3 seconds
+  const pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`http://localhost:3636/api/v1/payment/status/${paymentId}`);
+      const data = await res.json();
+
+      if (data.status === 'PAID') {
+        clearInterval(pollTimer);
+        document.getElementById('payment-status').textContent = 'Pembayaran Berhasil!';
+        
+        // Redirect to store success page
+        setTimeout(() => {
+          window.location.href = '/checkout/success?order=' + data.orderId;
+        }, 1200);
+      } else if (data.status === 'EXPIRED') {
+        clearInterval(pollTimer);
+        document.getElementById('payment-status').textContent = 'Waktu pembayaran telah habis.';
+      }
+    } catch (err) {
+      console.error('Polling error:', err);
+    }
+  }, 3000);
+</script>
 ```
 
 ---
 
-### 2. Payment Gateway & QRIS
+## Webhook Notifications
+
+When a payment is matched by the background reconciler, KaiGoBiz dispatches an HTTP POST webhook notification.
+
+### Webhook Payload Format
+
+```json
+{
+  "event": "payment.success",
+  "paymentId": "pay_1753470123456_a9b8c",
+  "orderId": "INV-2026-001",
+  "amount": 50000,
+  "status": "PAID",
+  "paidAt": "2026-09-15T10:49:07.000Z",
+  "transactionId": "tx_gopay_123456789",
+  "timestamp": "2026-09-15T10:49:07.000Z"
+}
+```
+
+### Webhook Handling Example (Express / Node.js)
+
+```javascript
+app.post('/api/webhook', express.json(), (req, res) => {
+  const { event, orderId, amount, status } = req.body;
+
+  if (event === 'payment.success' && status === 'PAID') {
+    // Update order in your database
+    console.log(`Pesanan ${orderId} lunas sebesar Rp ${amount}`);
+  }
+
+  // Respond with 200 OK to acknowledge receipt
+  res.status(200).json({ received: true });
+});
+```
+
+---
+
+## REST API Reference
+
+### Payment Endpoints
 
 #### `POST /api/v1/payment/create`
-Creates a dynamic QRIS payment order.
+Create a dynamic QRIS order.
 
-**Body:**
-```json
-{
-  "orderId": "INV-101",
-  "amount": 50000,
-  "expiryMinutes": 5
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "paymentId": "pay_1753470000000_abc12",
-  "orderId": "INV-101",
-  "amount": 50000,
-  "qrisString": "000201010212...63041A2B",
-  "qrisQrUrl": "data:image/png;base64,...",
-  "expiresAt": "2026-07-25T19:05:00.000Z"
-}
-```
+- **Request Body:**
+  ```json
+  {
+    "orderId": "INV-101",
+    "amount": 10000,
+    "expiryMinutes": 5,
+    "callbackUrl": "https://mysite.com/callback"
+  }
+  ```
+- **Response (200 OK):**
+  ```json
+  {
+    "success": true,
+    "paymentId": "pay_1753470000000_abc12",
+    "orderId": "INV-101",
+    "amount": 10000,
+    "qrisString": "000201...",
+    "qrisQrUrl": "data:image/png;base64,...",
+    "checkoutUrl": "http://localhost:3636/pay/pay_1753470000000_abc12",
+    "expiresAt": "2026-09-15T11:05:00.000Z",
+    "callbackUrl": "https://mysite.com/callback"
+  }
+  ```
 
 #### `GET /api/v1/payment/status/:paymentId`
-Polls payment status (`PENDING`, `PAID`, or `EXPIRED`).
+Check payment status (`PENDING`, `PAID`, or `EXPIRED`).
+
+- **Response (200 OK):**
+  ```json
+  {
+    "success": true,
+    "paymentId": "pay_1753470000000_abc12",
+    "orderId": "INV-101",
+    "amount": 10000,
+    "status": "PAID",
+    "createdAt": "2026-09-15T11:00:00.000Z",
+    "expiresAt": "2026-09-15T11:05:00.000Z",
+    "paidAt": "2026-09-15T11:02:14.000Z",
+    "qrisString": "000201...",
+    "qrisQrUrl": "data:image/png;base64,..."
+  }
+  ```
+
+#### `GET /api/v1/payment/template`
+Get the currently active static QRIS merchant template and parsed metadata (NMID, Merchant Name, City).
+
+#### `POST /api/v1/payment/template`
+Update the active static QRIS template.
+
+- **Request Body:**
+  ```json
+  {
+    "template": "00020101021126610014COM.GO-JEK.WWW..."
+  }
+  ```
+
+#### `POST /api/v1/payment/decode-qr`
+Server-side QR code extractor from base64 image (supports PNG, JPEG, WebP, HEIC, and PDF posters).
+
+- **Request Body:**
+  ```json
+  {
+    "imageBase64": "data:image/png;base64,..."
+  }
+  ```
 
 ---
 
-### 3. Transactions & Mutasi
+### Authentication Endpoints
+
+#### `GET /api/v1/auth/status`
+Check GoBiz connection status and merchant profile details.
+
+#### `POST /api/v1/auth/request-otp`
+Request an SMS OTP from GoBiz.
+
+- **Request Body:**
+  ```json
+  {
+    "phone": "081234567890"
+  }
+  ```
+
+#### `POST /api/v1/auth/verify-otp`
+Verify SMS OTP code and persist session tokens.
+
+- **Request Body:**
+  ```json
+  {
+    "phone": "081234567890",
+    "otp": "123456",
+    "otpToken": "TOKEN_FROM_REQUEST_OTP"
+  }
+  ```
+
+#### `POST /api/v1/auth/logout`
+Clear local GoBiz session tokens.
+
+---
+
+### Transactions & Mutasi
 
 #### `GET /api/v1/transactions`
-Fetches real-time GoBiz transaction history and syncs to storage.
+Fetches live transactions directly from the GoBiz Wallstreet Journal API. Automatically converts sen amounts to standard Rupiah.
 
 ---
 
-## 🧪 Testing
+## GoBiz Sen Currency Normalization
 
-Run unit & integration test suites powered by Vitest:
+Gojek Wallstreet Journal API reports amounts in minor currency units (*sen* / cents, factor of 100).
+For example:
+- A payment of **Rp 1.000** is reported as `100000` in the GoBiz API.
+- The 0.3% MDR fee is reported as `300` (Rp 3).
+
+KaiGoBiz handles this normalization automatically inside `GoBizClient` and `Reconciler`. Both raw units and normalized Rupiah are handled transparently, ensuring reliable matching without manual conversion on your end.
+
+---
+
+## Testing
+
+Run unit and integration test suites:
 
 ```bash
 npm test
 ```
 
+All core components (QRIS EMVCo parser, dynamic amount injection, CRC16 verification, file storage adapter, and HTTP endpoints) are covered by Vitest tests.
+
 ---
 
-## 📄 License
+## Production Deployment with PM2
 
-MIT License © 2026 KaiGoBiz Team
+To run KaiGoBiz 24/7 on a Linux VPS:
+
+```bash
+# 1. Install PM2 globally if not installed
+npm install -g pm2
+
+# 2. Build the production bundle
+npm run build
+
+# 3. Start process
+pm2 start "npm run server" --name kaigobiz
+
+# 4. Enable restart on system boot
+pm2 save
+pm2 startup
+```
+
+Check status and logs anytime:
+
+```bash
+pm2 status
+pm2 logs kaigobiz
+```
+
+---
+
+## License
+
+MIT License (c) 2026 KaiGoBiz Team

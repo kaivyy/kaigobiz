@@ -11,17 +11,31 @@ const client = new GoBizClient();
 transactions.get('/', async (c) => {
   const session = await manager.refreshIfNeeded();
   if (!session) {
-    return c.json({ error: 'GoBiz Session not connected or expired' }, 401);
+    const saved = (await storage.getTransactions()).filter((tx) => !tx.id.startsWith('tx_reconcile'));
+    return c.json({
+      success: true,
+      connected: false,
+      count: saved.length,
+      transactions: saved,
+      message: 'Sesi GoBiz belum terhubung.',
+    });
   }
   try {
     const items = await client.fetchTransactions(session);
-    for (const item of items) {
-      await storage.saveTransaction(item);
+    if (items.length > 0) {
+      await storage.saveTransactions(items);
     }
-    return c.json({ success: true, count: items.length, transactions: items });
+    return c.json({ success: true, connected: true, count: items.length, transactions: items });
   } catch (err: any) {
-    const saved = await storage.getTransactions();
-    return c.json({ success: false, fallback: true, count: saved.length, transactions: saved });
+    const saved = (await storage.getTransactions()).filter((tx) => !tx.id.startsWith('tx_reconcile'));
+    return c.json({
+      success: false,
+      connected: true,
+      fallback: true,
+      count: saved.length,
+      transactions: saved,
+      error: 'Gagal mengambil mutasi langsung dari GoBiz: ' + (err.message || 'Jaringan bermasalah'),
+    });
   }
 });
 

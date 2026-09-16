@@ -54,11 +54,22 @@ def main():
                 try:
                     res_json = response.json()
                     data = res_json.get("data", res_json)
-                    if data.get("access_token"):
+                    acc = data.get("access_token")
+                    ref = data.get("refresh_token", "")
+                    for h_name, h_val in response.headers.items():
+                        if h_name.lower() == "set-cookie" and "refresh_token=" in h_val:
+                            try:
+                                part = h_val.split("refresh_token=")[1].split(";")[0].strip()
+                                if part:
+                                    ref = part
+                            except Exception:
+                                pass
+                    if acc:
                         session_data = {
                             "phone_number": f"62{formatted_phone}",
-                            "access_token": data["access_token"],
-                            "refresh_token": data.get("refresh_token", ""),
+                            "access_token": acc,
+                            "refresh_token": ref,
+                            "cookie": f"access_token={acc}; refresh_token={ref}; auth_method=goid",
                             "expires_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 86400)),
                             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                         }
@@ -156,35 +167,36 @@ def main():
             # Wait for response / navigation
             time.sleep(5)
 
-            # Check if session captured via /goid/token response
-            if session_data.get("access_token"):
-                write_state({"status": "success", "session": session_data})
-                page.screenshot(path="gobiz-login-success.png")
-                print("LOGIN_SUCCESS")
-                return
-
-            # Check localStorage / cookies if response listener didn't catch it
+            # Inspect cookies and localStorage for both access_token and refresh_token
             try:
-                local_storage = page.evaluate("() => ({ ...localStorage })")
                 cookies = context.cookies()
-                token = None
-                for k, v in local_storage.items():
-                    if "token" in k.lower() or "auth" in k.lower():
-                        try:
-                            parsed = json.loads(v)
-                            if isinstance(parsed, dict) and parsed.get("access_token"):
-                                token = parsed.get("access_token")
-                        except Exception:
-                            pass
-                for c in cookies:
-                    if "token" in c.get("name", "").lower():
-                        token = c.get("value")
+                token_map = {c.get("name"): c.get("value") for c in cookies}
+                acc_cookie = token_map.get("access_token")
+                ref_cookie = token_map.get("refresh_token")
 
-                if token:
+                current_acc = session_data.get("access_token") or acc_cookie
+                current_ref = session_data.get("refresh_token") or ref_cookie or ""
+
+                if not current_acc or not current_ref:
+                    local_storage = page.evaluate("() => ({ ...localStorage })")
+                    for k, v in local_storage.items():
+                        if "token" in k.lower() or "auth" in k.lower():
+                            try:
+                                parsed = json.loads(v)
+                                if isinstance(parsed, dict):
+                                    if not current_acc and parsed.get("access_token"):
+                                        current_acc = parsed.get("access_token")
+                                    if not current_ref and parsed.get("refresh_token"):
+                                        current_ref = parsed.get("refresh_token")
+                            except Exception:
+                                pass
+
+                if current_acc:
                     session_data = {
                         "phone_number": f"62{formatted_phone}",
-                        "access_token": token,
-                        "refresh_token": "",
+                        "access_token": current_acc,
+                        "refresh_token": current_ref,
+                        "cookie": f"access_token={current_acc}; refresh_token={current_ref}; auth_method=goid",
                         "expires_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 86400)),
                         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     }
@@ -192,6 +204,7 @@ def main():
                         json.dump(session_data, f, indent=2)
                     write_state({"status": "success", "session": session_data})
                     page.screenshot(path="gobiz-login-success.png")
+                    print("LOGIN_SUCCESS")
                     return
             except Exception:
                 pass

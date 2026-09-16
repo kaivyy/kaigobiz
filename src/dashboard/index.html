@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>KaiGoBiz - Merchant Payment Gateway</title>
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="/src/dashboard/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
@@ -25,7 +25,7 @@
         <div class="brand-meta">
           <div class="brand-title-row">
             <span class="brand-name">KaiGoBiz</span>
-            <span class="version-tag">v1.0</span>
+            <span class="version-tag">v1.1.1</span>
           </div>
           <span class="brand-desc">GoBiz Gateway &amp; Scraper Infrastructure</span>
         </div>
@@ -238,6 +238,34 @@
               </div>
             </div>
 
+            <div class="field-block unique-code-card">
+              <div class="unique-code-header">
+                <label for="unique-code-toggle" class="unique-code-label">
+                  <input type="checkbox" id="unique-code-toggle" class="custom-checkbox" />
+                  <span>Kode Unik Otomatis</span>
+                </label>
+                <span class="unique-tag">Flash Sale</span>
+              </div>
+              <p class="unique-hint">
+                Memberikan angka unik (contoh: Rp 1.000 menjadi Rp 1.124) agar mutasi otomatis cocok tanpa bentrok pesanan.
+              </p>
+              <div id="unique-code-config" class="unique-code-config" style="display: none;">
+                <div class="unique-code-row">
+                  <div class="unique-subfield">
+                    <label for="unique-code-type">Metode</label>
+                    <select id="unique-code-type" class="small-select">
+                      <option value="ADD">Tambah (+)</option>
+                      <option value="SUBTRACT">Kurang (-)</option>
+                    </select>
+                  </div>
+                  <div class="unique-subfield">
+                    <label for="unique-code-max">Maksimal (Rp)</label>
+                    <input type="number" id="unique-code-max" value="250" min="10" max="999" class="small-input" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="form-actions-stack">
               <button type="submit" id="btn-generate-qris" class="btn primary full-width">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -267,7 +295,7 @@
           <div class="preview-header">
             <div>
               <span class="preview-badge">Live Preview</span>
-              <h3 class="preview-title" id="preview-order-label">INV-PREVIEW</h3>
+              <h3 class="preview-title" id="preview-order-label">Belum Ada Order</h3>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
               <div class="preview-timer-badge" id="preview-timer-badge" style="display: none;">
@@ -277,7 +305,7 @@
                 </svg>
                 <span id="preview-timer-text">--:--</span>
               </div>
-              <div class="status-tag pending" id="preview-status-tag">Siap Dipindai</div>
+              <div class="status-tag pending" id="preview-status-tag" style="display: none;">Siap Dipindai</div>
             </div>
           </div>
 
@@ -295,7 +323,8 @@
                 <span>Klik Generate untuk Membuat QRIS</span>
               </div>
             </div>
-            <div class="preview-amount-display" id="preview-amount-label">Rp 50.000</div>
+            <div class="preview-amount-display" id="preview-amount-label">Rp 0</div>
+            <div id="preview-unique-badge" class="preview-unique-badge" style="display: none;"></div>
             <p class="preview-note">Mendukung GoPay, BCA, Mandiri, ShopeePay, Dana, &amp; OVO</p>
           </div>
 
@@ -456,6 +485,6 @@
   <!-- Global Toast Notification -->
   <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
-  <script type="module" src="./app.ts"></script>
+  <script type="module" src="/src/dashboard/app.ts"></script>
 </body>
 </html>

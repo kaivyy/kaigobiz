@@ -4,7 +4,13 @@ import { SessionManager } from '../../core/session-manager';
 import { GoBizClient } from '../../core/gobiz-client';
 import { generateDynamicQRIS, generateQRCodeDataURL, inspectQRIS } from '../../core/qris-generator';
 import { PaymentOrder } from '../../core/storage/storage.interface';
-import { getGlobalWebhookUrl, sendWebhookNotification } from '../reconciler';
+import {
+  getGlobalWebhookUrl,
+  sendWebhookNotification,
+  getUsedTransactionIds,
+  isTransactionMatch,
+  isSafeWebhookUrl,
+} from '../reconciler';
 import { execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -100,8 +106,12 @@ payment.post('/decode-qr', async (c) => {
 
   const { imageBase64 } = body || {};
   if (!imageBase64 || typeof imageBase64 !== 'string') {
-    console.error('[decode-qr] No imageBase64 provided');
     return c.json({ error: 'Data gambar QR code tidak ditemukan' }, 400);
+  }
+
+  // Prevent memory exhaustion (max 10MB base64 string ~ 7.5MB image)
+  if (imageBase64.length > 10 * 1024 * 1024) {
+    return c.json({ error: 'Ukuran file gambar terlalu besar (maksimal 7 MB)' }, 413);
   }
 
   let tempFilePath: string | null = null;
@@ -109,13 +119,6 @@ payment.post('/decode-qr', async (c) => {
     const pythonScript = path.join(process.cwd(), 'decode_qr.py');
     const base64Data = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
     const buffer = Buffer.from(base64Data, 'base64');
-
-    console.log(`[decode-qr] Received image: ${buffer.length} bytes`);
-
-    // Always preserve last upload for diagnostics
-    try {
-      fs.writeFileSync(path.join(process.cwd(), 'last_uploaded_qr_debug.bin'), buffer);
-    } catch {}
 
     const randomSuffix = Math.random().toString(36).substring(2, 10);
     tempFilePath = path.join(os.tmpdir(), `kaigobiz_qr_${Date.now()}_${randomSuffix}.png`);
@@ -125,8 +128,6 @@ payment.post('/decode-qr', async (c) => {
       encoding: 'utf-8',
       timeout: 20000,
     }).trim();
-
-    console.log(`[decode-qr] Scanner output: ${qrString.substring(0, 60)}...`);
 
     if (!qrString || qrString === 'NO_QR_FOUND') {
       return c.json({ error: 'Tidak dapat mendeteksi kode QR dari gambar tersebut. Pastikan foto atau tangkapan layar jelas dan memuat kode QR.' }, 400);
@@ -173,6 +174,12 @@ payment.post('/webhook-config', async (c) => {
   }
 
   const { webhookUrl } = body || {};
+  const cleanWebhook = webhookUrl && typeof webhookUrl === 'string' && webhookUrl.trim() ? webhookUrl.trim() : null;
+
+  if (cleanWebhook && !isSafeWebhookUrl(cleanWebhook)) {
+    return c.json({ error: 'URL Webhook tidak valid atau mengarah ke alamat privat/lokal yang diblokir (SSRF protection)' }, 400);
+  }
+
   let config: Record<string, any> = {};
   if (fs.existsSync(CONFIG_FILE)) {
     try {
@@ -180,7 +187,7 @@ payment.post('/webhook-config', async (c) => {
     } catch {}
   }
 
-  config.webhookUrl = webhookUrl && typeof webhookUrl === 'string' && webhookUrl.trim() ? webhookUrl.trim() : null;
+  config.webhookUrl = cleanWebhook;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
 
   return c.json({
@@ -189,6 +196,45 @@ payment.post('/webhook-config', async (c) => {
     message: 'Konfigurasi Webhook URL berhasil diperbarui.',
   });
 });
+
+let inFlightFetch: Promise<any[]> | null = null;
+let lastGoBizFetchTime = 0;
+const GOBIZ_FETCH_COOLDOWN_MS = 2500;
+
+async function fetchTransactionsCoalesced(
+  manager: SessionManager,
+  client: GoBizClient,
+  storage: FileStorageAdapter
+): Promise<any[]> {
+  const now = Date.now();
+  if (now - lastGoBizFetchTime < GOBIZ_FETCH_COOLDOWN_MS) {
+    return await storage.getTransactions();
+  }
+  if (inFlightFetch) {
+    return await inFlightFetch;
+  }
+
+  inFlightFetch = (async () => {
+    try {
+      const session = await manager.refreshIfNeeded();
+      if (session) {
+        const freshItems = await client.fetchTransactions(session);
+        if (freshItems.length > 0) {
+          await storage.saveTransactions(freshItems);
+        }
+        lastGoBizFetchTime = Date.now();
+        return freshItems;
+      }
+      return [];
+    } catch {
+      return [];
+    } finally {
+      inFlightFetch = null;
+    }
+  })();
+
+  return await inFlightFetch;
+}
 
 // Create dynamic payment
 payment.post('/create', async (c) => {
@@ -199,34 +245,120 @@ payment.post('/create', async (c) => {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { orderId, amount, expiryMinutes = 5, callbackUrl } = body || {};
-  const numericAmount = Number(amount);
+  const {
+    orderId,
+    amount,
+    expiryMinutes = 5,
+    callbackUrl,
+    useUniqueCode,
+    uniqueCodeMin,
+    uniqueCodeMax,
+    uniqueCodeType,
+  } = body || {};
 
-  if (!orderId || isNaN(numericAmount) || numericAmount <= 0) {
-    return c.json({ error: 'Valid orderId and positive amount are required' }, 400);
+  if (orderId === undefined || orderId === null) {
+    return c.json({ error: 'orderId wajib diisi' }, 400);
+  }
+  const cleanOrderId = String(orderId).trim();
+  if (!cleanOrderId || cleanOrderId.length > 100) {
+    return c.json({ error: 'orderId harus berupa teks dengan panjang antara 1 sampai 100 karakter' }, 400);
+  }
+
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount < 1 || numericAmount > 100_000_000) {
+    return c.json({ error: 'Nominal pembayaran tidak valid. Harus berupa angka positif antara Rp 1 sampai Rp 100.000.000' }, 400);
+  }
+  const integerAmount = Math.round(numericAmount);
+
+  const expMin = Number(expiryMinutes ?? 5);
+  if (!Number.isFinite(expMin) || expMin < 1 || expMin > 1440) {
+    return c.json({ error: 'expiryMinutes harus berupa angka antara 1 sampai 1440 menit (maksimal 24 jam)' }, 400);
+  }
+
+  let cleanCallbackUrl: string | undefined;
+  if (callbackUrl && typeof callbackUrl === 'string' && callbackUrl.trim()) {
+    const trimmedUrl = callbackUrl.trim();
+    if (!isSafeWebhookUrl(trimmedUrl)) {
+      return c.json({ error: 'callbackUrl tidak valid atau dilarang demi keamanan sistem (SSRF protection)' }, 400);
+    }
+    cleanCallbackUrl = trimmedUrl;
+  }
+
+  // Idempotency: Return existing active pending order if orderId and amount match
+  const allOrders = (await storage.getAllPaymentOrders?.()) || [];
+  const existingPending = allOrders.find(
+    (o) =>
+      o.orderId === cleanOrderId &&
+      o.status === 'PENDING' &&
+      new Date(o.expiresAt).getTime() > Date.now()
+  );
+
+  const reqUrl = new URL(c.req.url);
+
+  if (existingPending && existingPending.amount === integerAmount) {
+    return c.json({
+      success: true,
+      paymentId: existingPending.paymentId,
+      orderId: existingPending.orderId,
+      amount: existingPending.amount,
+      rawAmount: existingPending.rawAmount,
+      uniqueCode: existingPending.uniqueCode,
+      qrisString: existingPending.qrisString,
+      qrisQrUrl: existingPending.qrisQrUrl,
+      checkoutUrl: `${reqUrl.origin}/pay/${existingPending.paymentId}`,
+      expiresAt: existingPending.expiresAt,
+      callbackUrl: existingPending.callbackUrl,
+      reused: true,
+    });
+  }
+
+  let finalAmount = integerAmount;
+  let uniqueCode: number | undefined;
+
+  if (useUniqueCode) {
+    const minCode = Math.max(1, Number(uniqueCodeMin) || 1);
+    const maxCode = Math.max(minCode, Math.min(9999, Number(uniqueCodeMax) || 250));
+    const isSubtract = uniqueCodeType === 'SUBTRACT';
+
+    const pendingAmounts = new Set(
+      allOrders
+        .filter((o) => o.status === 'PENDING' && new Date(o.expiresAt).getTime() > Date.now())
+        .map((o) => o.amount)
+    );
+
+    for (let attempt = 0; attempt < (maxCode - minCode + 1) * 2; attempt++) {
+      const candidateCode = Math.floor(minCode + Math.random() * (maxCode - minCode + 1));
+      const candidateAmount = isSubtract ? integerAmount - candidateCode : integerAmount + candidateCode;
+      if (candidateAmount >= 1 && !pendingAmounts.has(candidateAmount)) {
+        finalAmount = candidateAmount;
+        uniqueCode = candidateCode;
+        break;
+      }
+    }
   }
 
   const activeTemplate = getActiveTemplate();
   const paymentId = 'pay_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-  const qrisString = generateDynamicQRIS(activeTemplate, numericAmount);
+  const qrisString = generateDynamicQRIS(activeTemplate, finalAmount);
   const qrisQrUrl = await generateQRCodeDataURL(qrisString);
-  const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + expMin * 60 * 1000).toISOString();
 
   const order: PaymentOrder = {
     paymentId,
-    orderId: String(orderId),
-    amount: Math.round(numericAmount),
+    orderId: cleanOrderId,
+    amount: finalAmount,
+    rawAmount: integerAmount,
+    uniqueCode,
     qrisString,
     qrisQrUrl,
     status: 'PENDING',
     createdAt: new Date().toISOString(),
     expiresAt,
-    callbackUrl: callbackUrl && typeof callbackUrl === 'string' && callbackUrl.trim() ? callbackUrl.trim() : undefined,
+    callbackUrl: cleanCallbackUrl,
   };
 
   await storage.savePaymentOrder(order);
 
-  const reqUrl = new URL(c.req.url);
   const checkoutUrl = `${reqUrl.origin}/pay/${paymentId}`;
 
   return c.json({
@@ -234,6 +366,8 @@ payment.post('/create', async (c) => {
     paymentId,
     orderId: order.orderId,
     amount: order.amount,
+    rawAmount: order.rawAmount,
+    uniqueCode: order.uniqueCode,
     qrisString,
     qrisQrUrl,
     checkoutUrl,
@@ -257,31 +391,21 @@ payment.get('/status/:paymentId', async (c) => {
       await storage.savePaymentOrder(order);
     } else {
       const orderCreatedAt = new Date(order.createdAt).getTime();
-      const txs = await storage.getTransactions();
+      const allOrders = (await storage.getAllPaymentOrders?.()) || [];
+      const usedTxIds = getUsedTransactionIds(allOrders);
 
-      let matched = txs.find(
-        (tx) =>
-          tx.status === 'COMPLETED' &&
-          Math.abs(tx.amount - order.amount) < 0.01 &&
-          new Date(tx.timestamp).getTime() >= orderCreatedAt - 5000
+      const txs = await storage.getTransactions();
+      let matched = txs.find((tx) =>
+        isTransactionMatch(tx, order.amount, orderCreatedAt, usedTxIds)
       );
 
-      // Attempt sync from GoBiz if session is active and transaction not found locally
+      // Attempt single-flight coalesced sync from GoBiz if session is active and transaction not found locally
       if (!matched) {
         try {
-          const session = await manager.refreshIfNeeded();
-          if (session) {
-            const freshItems = await client.fetchTransactions(session);
-            if (freshItems.length > 0) {
-              await storage.saveTransactions(freshItems);
-            }
-            matched = freshItems.find(
-              (tx) =>
-                tx.status === 'COMPLETED' &&
-                Math.abs(tx.amount - order.amount) < 0.01 &&
-                new Date(tx.timestamp).getTime() >= orderCreatedAt - 5000
-            );
-          }
+          const freshItems = await fetchTransactionsCoalesced(manager, client, storage);
+          matched = freshItems.find((tx) =>
+            isTransactionMatch(tx, order.amount, orderCreatedAt, usedTxIds)
+          );
         } catch {
           // Ignore sync errors and report current state
         }
@@ -290,6 +414,7 @@ payment.get('/status/:paymentId', async (c) => {
       if (matched) {
         order.status = 'PAID';
         order.paidAt = new Date().toISOString();
+        order.transactionId = matched.id;
 
         const targetCallback = order.callbackUrl || getGlobalWebhookUrl();
         if (targetCallback && order.callbackStatus !== 'SUCCESS') {
@@ -315,6 +440,7 @@ payment.get('/status/:paymentId', async (c) => {
     expiresAt: order.expiresAt,
     createdAt: order.createdAt,
     paidAt: order.paidAt,
+    transactionId: order.transactionId,
     qrisString: order.qrisString,
     qrisQrUrl: order.qrisQrUrl,
   });

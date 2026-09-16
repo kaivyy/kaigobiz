@@ -4,6 +4,12 @@ export interface CheckoutOptions {
   endpoint: string;
   orderId: string;
   amount: number;
+  callbackUrl?: string;
+  expiryMinutes?: number;
+  useUniqueCode?: boolean;
+  uniqueCodeMin?: number;
+  uniqueCodeMax?: number;
+  uniqueCodeType?: 'ADD' | 'SUBTRACT';
   onSuccess?: (res: any) => void;
   onPending?: (res: any) => void;
   onExpired?: () => void;
@@ -20,6 +26,12 @@ export class KaiGoBiz {
         body: JSON.stringify({
           orderId: options.orderId,
           amount: options.amount,
+          callbackUrl: options.callbackUrl,
+          expiryMinutes: options.expiryMinutes,
+          useUniqueCode: options.useUniqueCode,
+          uniqueCodeMin: options.uniqueCodeMin,
+          uniqueCodeMax: options.uniqueCodeMax,
+          uniqueCodeType: options.uniqueCodeType,
         }),
       });
 

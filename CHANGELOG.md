@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-09-16
+
+### ✨ Added
+- **Dynamic Unique Code (Kode Unik) Allocation for Flash Sales**:
+  - Added optional `useUniqueCode`, `uniqueCodeMin`, `uniqueCodeMax` (default: 250), and `uniqueCodeType` (`ADD` | `SUBTRACT`) parameters to `POST /api/v1/payment/create`.
+  - Ensures 100% collision-free automatic reconciliation during high-concurrency flash sales by allocating distinct payable amounts (e.g., Rp 50.124).
+  - Extended response schema with `amount` (final payable amount), `rawAmount` (base price), and `uniqueCode` (allocated random code).
+  - Integrated into Hosted Checkout Page, Embeddable Modal Widget (`kaigobiz.js`), and Dashboard QRIS Studio.
+- **HMAC-SHA256 Webhook Signatures (`WEBHOOK_SECRET`)**:
+  - Every webhook dispatch includes `X-KaiGoBiz-Signature: sha256=<hmac>` computed over the raw JSON payload when `WEBHOOK_SECRET` is configured.
+  - Added `X-KaiGoBiz-Timestamp` and `User-Agent: KaiGoBiz-Webhook/1.0` headers.
+  - Added signature verification examples for Node.js/Express (with timing-safe comparison) and PHP/Laravel (`hash_equals`).
+- **Webhook Automatic Retries**:
+  - Background reconciler automatically retries failed webhook notifications (`callbackStatus === 'FAILED'`) up to 5 times with a 30-second backoff window.
+- **Server-Side Request Forgery (SSRF) Protection**:
+  - Validates all callback URLs, rejecting loopback (`127.0.0.1`), RFC 1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`), and internal hostnames.
+- **Interactive Kode Unik Controls in Dashboard QRIS Studio**:
+  - Added checkbox toggle, allocation strategy selector (`ADD` / `SUBTRACT`), and maximum code input directly in the dashboard UI.
+  - Live preview badge displays the real-time breakdown of the base amount and unique code.
+- **Proactive Background Session Heartbeat**:
+  - Background reconciler executes a 60-second idle token check, automatically refreshing access tokens before expiration during periods without customer transactions.
+- **High-Concurrency Request Coalescing**:
+  - Added `fetchTransactionsCoalesced` single-flight deduplication with a 2.5-second cooldown on GoBiz Wallstreet Journal API calls to prevent rate-limiting during traffic spikes.
+- **Double-Settlement Defense**:
+  - Persisted `transactionId` on `PaymentOrder` and implemented strict `getUsedTransactionIds` across reconciler and status routes to prevent duplicate settlement of orders with identical amounts.
+  - Enforced chronological FIFO matching: orders are matched by `createdAt ASC` against earliest valid transaction timestamps.
+
+### 🔒 Security & Reliability
+- **Anti-Bot Jitter & Modern Fingerprinting**:
+  - Replaced static 7-second polling timer with self-scheduling randomized jitter (5s - 11s, +/- 25% variation).
+  - Modernized simulated client fingerprint to Windows 10 x64 Chrome 133 with valid `sec-ch-ua` headers.
+- **OTP Endpoint Rate Limiting**:
+  - Implemented 20-second cooldown on `POST /api/v1/auth/request-otp` returning HTTP 429 Too Many Requests.
+- **Stored XSS Sanitization in Checkout Page**:
+  - Sanitized embedded JSON payload (`orderJson.replace(/</g, '\\u003c')`), escaped HTML attributes on QR URL, and restricted redirect URLs to valid HTTP/HTTPS protocols.
+- **Atomic File Storage (`writeAtomic`)**:
+  - Replaced direct `fs.writeFileSync` in `FileStorageAdapter` with temporary file creation and atomic rename (`writeAtomic`) to eliminate JSON file corruption during abrupt server restarts.
+- **Memory Exhaustion / Large Payload Protection**:
+  - Enforced 10MB limit and HTTP 413 Payload Too Large protection on `POST /api/v1/payment/decode-qr`.
+
+### 🧪 Tests & Documentation
+- **Expanded Test Suite**:
+  - Added comprehensive automated tests for unique code assignment, subtraction, amount boundary validations, and anti-duplicate settlements (33 passing tests).
+- **Documentation Overhaul**:
+  - Fully documented all three integration modes, webhook verification guides, and complete REST API parameters in `README.md`.
+
+---
+
 ## [1.1.0] - 2026-09-15
 
 ### ✨ Added

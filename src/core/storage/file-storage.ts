@@ -27,6 +27,24 @@ export class FileStorageAdapter implements StorageAdapter {
     }
   }
 
+  private writeAtomic(filePath: string, content: string): boolean {
+    try {
+      this.ensureDirExists(filePath);
+      const tempPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}`;
+      fs.writeFileSync(tempPath, content, 'utf-8');
+      fs.renameSync(tempPath, filePath);
+      return true;
+    } catch {
+      try {
+        // Fallback for filesystem environments where rename across partitions fails
+        fs.writeFileSync(filePath, content, 'utf-8');
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   async getSession(): Promise<SessionData | null> {
     try {
       if (!fs.existsSync(this.sessionFile)) return null;
@@ -38,13 +56,7 @@ export class FileStorageAdapter implements StorageAdapter {
   }
 
   async saveSession(session: SessionData): Promise<boolean> {
-    try {
-      this.ensureDirExists(this.sessionFile);
-      fs.writeFileSync(this.sessionFile, JSON.stringify(session, null, 2), 'utf-8');
-      return true;
-    } catch {
-      return false;
-    }
+    return this.writeAtomic(this.sessionFile, JSON.stringify(session, null, 2));
   }
 
   async clearSession(): Promise<boolean> {
@@ -77,8 +89,7 @@ export class FileStorageAdapter implements StorageAdapter {
         (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
 
-      fs.writeFileSync(this.txFile, JSON.stringify(merged.slice(0, 500), null, 2), 'utf-8');
-      return true;
+      return this.writeAtomic(this.txFile, JSON.stringify(merged.slice(0, 500), null, 2));
     } catch {
       return false;
     }
@@ -104,8 +115,7 @@ export class FileStorageAdapter implements StorageAdapter {
       } else {
         orders.unshift(order);
       }
-      fs.writeFileSync(this.ordersFile, JSON.stringify(orders.slice(0, 500), null, 2), 'utf-8');
-      return true;
+      return this.writeAtomic(this.ordersFile, JSON.stringify(orders.slice(0, 500), null, 2));
     } catch {
       return false;
     }

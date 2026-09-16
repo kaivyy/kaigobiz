@@ -14,16 +14,16 @@ export class GoBizClient {
       'content-type': 'application/json',
       'origin': 'https://portal.gofoodmerchant.co.id',
       'referer': 'https://portal.gofoodmerchant.co.id/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       'gojek-country-code': 'ID',
       'gojek-timezone': 'Asia/Jakarta',
       'x-appid': 'go-biz-web-dashboard',
-      'x-appversion': 'platform-v3.111.0-1708bc9a',
+      'x-appversion': 'platform-v3.122.0-72edb090',
       'x-deviceos': 'Web',
       'x-phonemake': 'Windows 10 64-bit',
-      'x-phonemodel': 'Chrome 150.0.0.0 on Windows 10 64-bit',
+      'x-phonemodel': 'Chrome 133.0.0.0 on Windows 10 64-bit',
       'x-platform': 'Web',
-      'x-user-locale': 'en-GB',
+      'x-user-locale': 'id-ID',
       'x-user-type': 'merchant',
     };
     if (session?.access_token) {
@@ -104,22 +104,35 @@ export class GoBizClient {
   }
 
   async refreshToken(session: SessionData): Promise<SessionData> {
-    const formattedPhone = (session.phone_number || '').replace(/\D/g, '').replace(/^62/, '').replace(/^0/, '');
+    if (!session.refresh_token || !session.refresh_token.trim()) {
+      throw new Error('Tidak ada refresh_token yang tersimpan. Silakan login ulang via OTP.');
+    }
+
     const res = await axios.post(
-      GoBizClient.VERIFY_OTP_URL,
+      'https://api.gobiz.co.id/goid/token',
       {
         client_id: 'go-biz-web-new',
         grant_type: 'refresh_token',
         data: {
           refresh_token: session.refresh_token,
-          phone_number: formattedPhone,
-          country_code: '62',
         },
       },
       {
         headers: {
-          ...GoBizClient.getHeaders(session),
-          'authentication-type': 'refresh_token',
+          'Content-Type': 'application/json',
+          'Authentication-Type': 'go-id',
+          'X-PhoneMake': 'Linux',
+          'X-PhoneModel': 'Firefox',
+          'x-DeviceOS': 'Web',
+          'Accept-Language': 'id',
+          'X-User-Locale': 'id-ID',
+          'X-AppVersion': 'platform-v3.122.0-72edb090',
+          'Gojek-Country-Code': 'ID',
+          'Gojek-Timezone': 'Asia/Jakarta',
+          'X-Platform': 'Web',
+          'X-User-Type': 'merchant',
+          'x-appId': 'go-biz-web-dashboard',
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0',
         },
         timeout: 15000,
       }
@@ -130,6 +143,8 @@ export class GoBizClient {
     const newRefreshToken = data.refresh_token || session.refresh_token;
     const expirySeconds = Number(data.expires_in) || 86400;
     const expiresAt = new Date(Date.now() + expirySeconds * 1000).toISOString();
+
+    console.log(`[KaiGoBiz Auth] Auto-refresh session berhasil! Masa berlaku hingga ${expiresAt}`);
 
     return {
       ...session,

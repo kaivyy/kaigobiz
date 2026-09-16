@@ -9,7 +9,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
     status: order.status,
     expiresAt: order.expiresAt,
     callbackUrl: order.callbackUrl || null,
-  });
+  }).replace(/</g, '\\u003c');
 
   return `<!DOCTYPE html>
 <html lang="id">
@@ -438,7 +438,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
           <div class="qris-top-logo">
             QRIS <span>STANDAR NASIONAL</span>
           </div>
-          <img class="qris-image" id="qris-img" src="${order.qrisQrUrl || ''}" alt="QRIS Pembayaran" />
+          <img class="qris-image" id="qris-img" src="${escapeHtml(order.qrisQrUrl || '')}" alt="QRIS Pembayaran" />
         </div>
 
         <p class="supported-wallets">
@@ -550,7 +550,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
         if (stateExpired) stateExpired.classList.remove('active');
         if (stateSuccess) stateSuccess.classList.add('active');
 
-        if (order.callbackUrl) {
+        if (order.callbackUrl && /^https?:\/\//i.test(order.callbackUrl)) {
           setTimeout(() => {
             window.location.href = order.callbackUrl;
           }, 3000);
@@ -614,10 +614,36 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
         pollInterval = setInterval(checkPaymentStatus, 2500);
       }
 
+      function copyTextToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+        return new Promise(function(resolve, reject) {
+          var textArea = document.createElement('textarea');
+          textArea.value = text;
+          textArea.style.position = 'fixed';
+          textArea.style.top = '0';
+          textArea.style.left = '0';
+          textArea.style.opacity = '0';
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          try {
+            var successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            if (successful) resolve();
+            else reject(new Error('execCommand failed'));
+          } catch (err) {
+            document.body.removeChild(textArea);
+            reject(err);
+          }
+        });
+      }
+
       btnCopy?.addEventListener('click', async () => {
         if (!rawQris) return;
         try {
-          await navigator.clipboard.writeText(rawQris);
+          await copyTextToClipboard(rawQris);
           showToast('Kode QRIS berhasil disalin ke papan klip');
         } catch {
           showToast('Gagal menyalin kode QRIS');
@@ -635,7 +661,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
       });
 
       btnSuccessAction?.addEventListener('click', () => {
-        if (order.callbackUrl) {
+        if (order.callbackUrl && /^https?:\/\//i.test(order.callbackUrl)) {
           window.location.href = order.callbackUrl;
         } else {
           window.close();

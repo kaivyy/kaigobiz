@@ -26,6 +26,8 @@ export interface PaymentOrder {
   paymentId: string;
   orderId: string;
   amount: number;
+  rawAmount?: number;
+  uniqueCode?: number;
   qrisString: string;
   qrisQrUrl?: string;
   status: 'PENDING' | 'PAID' | 'EXPIRED';
@@ -34,6 +36,9 @@ export interface PaymentOrder {
   callbackUrl?: string;
   paidAt?: string;
   callbackStatus?: 'SUCCESS' | 'FAILED' | 'SKIPPED';
+  callbackRetries?: number;
+  lastCallbackAttempt?: string;
+  transactionId?: string;
 }
 
 export interface StorageAdapter {

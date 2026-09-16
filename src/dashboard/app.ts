@@ -501,6 +501,19 @@ function initQrisStudio() {
   const previewTimerText = document.getElementById('preview-timer-text');
   const btnOpenCheckout = document.getElementById('btn-open-checkout') as HTMLAnchorElement;
 
+  // Unique Code Elements
+  const uniqueCodeToggle = document.getElementById('unique-code-toggle') as HTMLInputElement;
+  const uniqueCodeConfig = document.getElementById('unique-code-config') as HTMLDivElement;
+  const uniqueCodeTypeSelect = document.getElementById('unique-code-type') as HTMLSelectElement;
+  const uniqueCodeMaxInput = document.getElementById('unique-code-max') as HTMLInputElement;
+  const previewUniqueBadge = document.getElementById('preview-unique-badge') as HTMLDivElement;
+
+  uniqueCodeToggle?.addEventListener('change', () => {
+    if (uniqueCodeConfig) {
+      uniqueCodeConfig.style.display = uniqueCodeToggle.checked ? 'block' : 'none';
+    }
+  });
+
   // Template Config Elements
   const templateBadge = document.getElementById('template-status-badge');
   const templateWarning = document.getElementById('template-warning-banner');
@@ -832,28 +845,11 @@ function initQrisStudio() {
 
   // Set initial Order ID
   if (orderInput && !orderInput.value) {
-    const initOrder = generateRandomOrderId();
-    orderInput.value = initOrder;
-    if (previewOrderLabel) previewOrderLabel.textContent = initOrder;
+    orderInput.value = generateRandomOrderId();
   }
 
   btnRandomOrder?.addEventListener('click', () => {
-    const newId = generateRandomOrderId();
-    if (orderInput) orderInput.value = newId;
-    if (previewOrderLabel) previewOrderLabel.textContent = newId;
-  });
-
-  orderInput?.addEventListener('input', () => {
-    if (previewOrderLabel) {
-      previewOrderLabel.textContent = orderInput.value.trim() || 'INV-PREVIEW';
-    }
-  });
-
-  amountInput?.addEventListener('input', () => {
-    const val = Number(amountInput.value) || 0;
-    if (previewAmountLabel) {
-      previewAmountLabel.textContent = `Rp ${val.toLocaleString('id-ID')}`;
-    }
+    if (orderInput) orderInput.value = generateRandomOrderId();
   });
 
   document.querySelectorAll<HTMLButtonElement>('.btn-preset').forEach((btn) => {
@@ -861,9 +857,6 @@ function initQrisStudio() {
       const amount = btn.getAttribute('data-amount');
       if (amountInput && amount) {
         amountInput.value = amount;
-        if (previewAmountLabel) {
-          previewAmountLabel.textContent = `Rp ${Number(amount).toLocaleString('id-ID')}`;
-        }
       }
     });
   });
@@ -969,6 +962,8 @@ function initQrisStudio() {
     paymentId: string;
     orderId: string;
     amount: number;
+    rawAmount?: number;
+    uniqueCode?: number;
     qrisString: string;
     qrisQrUrl: string;
     expiresAt: string;
@@ -981,6 +976,17 @@ function initQrisStudio() {
 
     if (previewOrderLabel) previewOrderLabel.textContent = payment.orderId;
     if (previewAmountLabel) previewAmountLabel.textContent = `Rp ${Number(payment.amount).toLocaleString('id-ID')}`;
+
+    if (previewUniqueBadge) {
+      if (payment.uniqueCode && payment.uniqueCode > 0) {
+        const raw = payment.rawAmount || payment.amount;
+        const sign = payment.amount > raw ? '+' : '-';
+        previewUniqueBadge.style.display = 'inline-block';
+        previewUniqueBadge.textContent = `Termasuk kode unik ${sign}${payment.uniqueCode} (Nominal dasar: Rp ${Number(raw).toLocaleString('id-ID')})`;
+      } else {
+        previewUniqueBadge.style.display = 'none';
+      }
+    }
 
     if (previewStatusTag) {
       previewStatusTag.className = 'status-tag pending';
@@ -1012,6 +1018,8 @@ function initQrisStudio() {
         paymentId: payment.paymentId,
         orderId: payment.orderId,
         amount: payment.amount,
+        rawAmount: payment.rawAmount,
+        uniqueCode: payment.uniqueCode,
         qrisString: payment.qrisString,
         qrisQrUrl: payment.qrisQrUrl,
         expiresAt: payment.expiresAt,
@@ -1055,6 +1063,8 @@ function initQrisStudio() {
         paymentId: saved.paymentId,
         orderId: data.orderId || saved.orderId,
         amount: data.amount || saved.amount,
+        rawAmount: data.rawAmount || saved.rawAmount,
+        uniqueCode: data.uniqueCode || saved.uniqueCode,
         qrisString: data.qrisString || saved.qrisString,
         qrisQrUrl: data.qrisQrUrl || saved.qrisQrUrl,
         expiresAt: data.expiresAt || saved.expiresAt,
@@ -1069,6 +1079,9 @@ function initQrisStudio() {
     const orderId = orderInput?.value.trim() || generateRandomOrderId();
     const amount = Number(amountInput?.value);
     const expiry = Number(expirySelect?.value) || 5;
+    const useUniqueCode = uniqueCodeToggle?.checked ?? false;
+    const uniqueCodeType = (uniqueCodeTypeSelect?.value as 'ADD' | 'SUBTRACT') || 'ADD';
+    const uniqueCodeMax = Number(uniqueCodeMaxInput?.value) || 250;
 
     if (!amount || amount <= 0) {
       showToast('Nominal harus lebih besar dari Rp 0', 'error');
@@ -1088,6 +1101,9 @@ function initQrisStudio() {
           orderId,
           amount,
           expiryMinutes: expiry,
+          useUniqueCode,
+          uniqueCodeMax,
+          uniqueCodeType,
         }),
       });
 
@@ -1098,12 +1114,15 @@ function initQrisStudio() {
           paymentId: data.paymentId,
           orderId: data.orderId,
           amount: data.amount,
+          rawAmount: data.rawAmount,
+          uniqueCode: data.uniqueCode,
           qrisString: data.qrisString,
           qrisQrUrl: data.qrisQrUrl,
           expiresAt: data.expiresAt,
         });
 
-        showToast(`QRIS dinamis berhasil dibuat untuk order ${data.orderId}`, 'success');
+        const codeInfo = data.uniqueCode ? ` (Kode Unik: ${data.amount > data.rawAmount ? '+' : '-'}${data.uniqueCode})` : '';
+        showToast(`QRIS dinamis berhasil dibuat untuk order ${data.orderId}${codeInfo}`, 'success');
       } else {
         showToast(data.error || 'Gagal menghasilkan QRIS', 'error');
       }
@@ -1148,6 +1167,10 @@ function initQrisStudio() {
   btnLaunchWidget?.addEventListener('click', () => {
     const orderId = orderInput?.value.trim() || generateRandomOrderId();
     const amount = Number(amountInput?.value);
+    const expiry = Number(expirySelect?.value) || 5;
+    const useUniqueCode = uniqueCodeToggle?.checked ?? false;
+    const uniqueCodeType = (uniqueCodeTypeSelect?.value as 'ADD' | 'SUBTRACT') || 'ADD';
+    const uniqueCodeMax = Number(uniqueCodeMaxInput?.value) || 250;
 
     if (!amount || amount <= 0) {
       showToast('Masukkan nominal pembayaran yang valid terlebih dahulu', 'error');
@@ -1158,6 +1181,10 @@ function initQrisStudio() {
       endpoint: window.location.origin,
       orderId,
       amount,
+      expiryMinutes: expiry,
+      useUniqueCode,
+      uniqueCodeMax,
+      uniqueCodeType,
       onSuccess: (res) => {
         showToast(`Pembayaran Sukses: Order ${res.orderId || orderId}`, 'success');
         fetchTransactions();

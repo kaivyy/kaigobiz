@@ -16,7 +16,10 @@ const COMMAND_FILE = path.join(process.cwd(), '.kaigobiz-worker-command.json');
 const WORKER_SCRIPT = path.join(process.cwd(), 'camoufox_gobiz_worker.py');
 
 auth.get('/status', async (c) => {
-  let session = await manager.getSession();
+  let session = await manager.refreshIfNeeded();
+  if (!session) {
+    session = await manager.getSession();
+  }
   const isExpired = manager.isExpired(session);
 
   if (session && !isExpired) {
@@ -106,6 +109,9 @@ auth.post('/logout', async (c) => {
   });
 });
 
+let lastOtpRequestTimestamp = 0;
+const OTP_COOLDOWN_MS = process.env.NODE_ENV === 'test' ? 1000 : 20_000;
+
 auth.post('/request-otp', async (c) => {
   let body: any;
   try {
@@ -121,6 +127,13 @@ auth.post('/request-otp', async (c) => {
   if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 15) {
     return c.json({ error: 'Invalid phone number format' }, 400);
   }
+
+  const now = Date.now();
+  if (now - lastOtpRequestTimestamp < OTP_COOLDOWN_MS) {
+    const remaining = Math.ceil((OTP_COOLDOWN_MS - (now - lastOtpRequestTimestamp)) / 1000);
+    return c.json({ error: `Harap tunggu ${remaining} detik sebelum meminta kode OTP kembali.` }, 429);
+  }
+  lastOtpRequestTimestamp = now;
 
   // 1. First attempt direct API
   try {

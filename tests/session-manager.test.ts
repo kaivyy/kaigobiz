@@ -34,7 +34,7 @@ describe('SessionManager', () => {
     const futureSession: SessionData = {
       access_token: 'abc',
       refresh_token: 'def',
-      expires_at: new Date(Date.now() + 3600000).toISOString(),
+      expires_at: new Date(Date.now() + 7200000).toISOString(),
     };
     expect(manager.isExpired(futureSession)).toBe(false);
 
@@ -51,7 +51,7 @@ describe('SessionManager', () => {
     const validSession: SessionData = {
       access_token: 'valid_token',
       refresh_token: 'ref_token',
-      expires_at: new Date(Date.now() + 3600000).toISOString(),
+      expires_at: new Date(Date.now() + 7200000).toISOString(),
     };
     await manager.saveSession(validSession);
     const session = await manager.refreshIfNeeded();

@@ -1,6 +1,6 @@
 {
   "name": "kaigobiz",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "High-performance TypeScript GoBiz/GoPay Payment Gateway & Scraper",
   "main": "dist/index.js",
   "scripts": {

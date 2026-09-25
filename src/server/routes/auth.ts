@@ -44,6 +44,7 @@ auth.get('/status', async (c) => {
 
   return c.json({
     connected: !!session && !isExpired,
+    needs_relogin: manager.needsRelogin,
     session: session
       ? {
           phone_number: session.phone_number,

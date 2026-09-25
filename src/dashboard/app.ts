@@ -11,6 +11,7 @@ interface TransactionItem {
 
 interface AuthStatusResponse {
   connected: boolean;
+  needs_relogin?: boolean;
   session?: {
     outlet_name?: string;
     owner_name?: string;
@@ -250,21 +251,44 @@ async function checkStatus() {
         });
       }
     } else {
+      const needsRelogin = Boolean((data as any).needs_relogin);
+
       if (badge && badgeText) {
-        badge.className = 'status-pill offline';
-        badgeText.textContent = 'Belum Terhubung';
+        badge.className = needsRelogin ? 'status-pill warning' : 'status-pill offline';
+        badgeText.textContent = needsRelogin ? 'Perlu Login Ulang' : 'Belum Terhubung';
       }
-      if (sessionStatStatus) sessionStatStatus.textContent = 'Offline';
-      if (sessionStatOutlet) sessionStatOutlet.textContent = 'Belum Terhubung';
+      if (sessionStatStatus) sessionStatStatus.textContent = needsRelogin ? 'Sesi Kedaluwarsa' : 'Offline';
+      if (sessionStatOutlet) sessionStatOutlet.textContent = needsRelogin ? 'Perlu Login Ulang' : 'Belum Terhubung';
 
       if (sessionInfoContainer) {
-        sessionInfoContainer.innerHTML = `
-          <div class="empty-state" style="padding: 24px 12px;">
-            <p style="color: var(--text-muted); font-size: 13px;">
-              Sesi merchant GoBiz belum terhubung. Masukkan nomor handphone di formulir sebelah untuk menghubungkan akun GoBiz Anda.
-            </p>
-          </div>
-        `;
+        if (needsRelogin) {
+          sessionInfoContainer.innerHTML = `
+            <div class="template-banner warning" style="margin: 0 0 16px; border-radius: 8px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              <div class="template-banner-text">
+                <strong>Sesi GoBiz Kedaluwarsa</strong><br>
+                Token otentikasi sudah tidak valid dan tidak dapat diperbarui otomatis. Silakan login ulang menggunakan nomor GoBiz Anda di formulir di bawah ini.
+              </div>
+            </div>
+            <div class="empty-state" style="padding: 8px 12px;">
+              <p style="color: var(--text-muted); font-size: 13px;">
+                Masukkan nomor handphone GoBiz Anda untuk menghubungkan ulang akun.
+              </p>
+            </div>
+          `;
+        } else {
+          sessionInfoContainer.innerHTML = `
+            <div class="empty-state" style="padding: 24px 12px;">
+              <p style="color: var(--text-muted); font-size: 13px;">
+                Sesi merchant GoBiz belum terhubung. Masukkan nomor handphone di formulir sebelah untuk menghubungkan akun GoBiz Anda.
+              </p>
+            </div>
+          `;
+        }
       }
     }
   } catch {

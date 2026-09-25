@@ -1,27 +1,61 @@
 import axios from 'axios';
 import { SessionData, TransactionData } from './storage/storage.interface';
 
+// Permanent failure: server explicitly rejects token (not a transient network error).
+// These error codes indicate re-login is needed, not just a retry.
+const PERMANENT_ERROR_CODES = new Set([
+  'goid:error:unauthorized',
+  'goid:error:token_expired',
+  'goid:error:invalid_token',
+  'goid:error:revoked_token',
+]);
+
 export class GoBizClient {
   private static REQUEST_OTP_URL = 'https://api.gobiz.co.id/goid/login/request';
   private static VERIFY_OTP_URL = 'https://api.gobiz.co.id/goid/token';
   private static USER_CONFIG_URL = 'https://api.gobiz.co.id/goresto/v5/public/users/config';
   private static TRANSACTIONS_URL = 'https://api.gojekapi.com/merchant-analytics/v2/merchants/transactions';
 
+  // Rotate between realistic browser fingerprints to avoid pattern detection.
+  // Each entry matches a real browser + OS combination that GoBiz supports.
+  private static readonly UA_POOL = [
+    {
+      ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+      make: 'Windows 10 64-bit',
+      model: 'Chrome 133.0.0.0 on Windows 10 64-bit',
+    },
+    {
+      ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+      make: 'Windows 10 64-bit',
+      model: 'Chrome 134.0.0.0 on Windows 10 64-bit',
+    },
+    {
+      ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+      make: 'macOS Ventura',
+      model: 'Chrome 133.0.0.0 on macOS',
+    },
+  ];
+
+  private static pickUA() {
+    return GoBizClient.UA_POOL[Math.floor(Math.random() * GoBizClient.UA_POOL.length)];
+  }
+
   static getHeaders(session?: SessionData | null) {
+    const fp = GoBizClient.UA_POOL[0];
     const headers: Record<string, string> = {
       'accept': 'application/json, text/plain, */*',
       'accept-language': 'id',
       'content-type': 'application/json',
       'origin': 'https://portal.gofoodmerchant.co.id',
       'referer': 'https://portal.gofoodmerchant.co.id/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+      'user-agent': fp.ua,
       'gojek-country-code': 'ID',
       'gojek-timezone': 'Asia/Jakarta',
       'x-appid': 'go-biz-web-dashboard',
-      'x-appversion': 'platform-v3.122.0-72edb090',
+      'x-appversion': 'platform-v3.125.0-e1923971',
       'x-deviceos': 'Web',
-      'x-phonemake': 'Windows 10 64-bit',
-      'x-phonemodel': 'Chrome 133.0.0.0 on Windows 10 64-bit',
+      'x-phonemake': fp.make,
+      'x-phonemodel': fp.model,
       'x-platform': 'Web',
       'x-user-locale': 'id-ID',
       'x-user-type': 'merchant',
@@ -65,7 +99,6 @@ export class GoBizClient {
     const accessToken = data.access_token;
     const refreshToken = data.refresh_token;
 
-    // Fetch user config
     let merchantId = null;
     let outletName = null;
     let ownerName = null;
@@ -105,38 +138,73 @@ export class GoBizClient {
 
   async refreshToken(session: SessionData): Promise<SessionData> {
     if (!session.refresh_token || !session.refresh_token.trim()) {
-      throw new Error('Tidak ada refresh_token yang tersimpan. Silakan login ulang via OTP.');
+      const err = new Error('NO_REFRESH_TOKEN');
+      (err as any).isPermanent = true;
+      throw err;
     }
 
-    const res = await axios.post(
-      'https://api.gobiz.co.id/goid/token',
-      {
-        client_id: 'go-biz-web-new',
-        grant_type: 'refresh_token',
-        data: {
+    // Random jitter 200-900ms — avoids fixed-interval fingerprinting by GoBiz rate limiter.
+    await new Promise((r) => setTimeout(r, 200 + Math.floor(Math.random() * 700)));
+
+    const fp = GoBizClient.pickUA();
+
+    let res;
+    try {
+      res = await axios.post(
+        'https://api.gobiz.co.id/goid/token',
+        {
+          client_id: 'go-biz-web-new',
+          grant_type: 'refresh_token',
           refresh_token: session.refresh_token,
         },
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authentication-Type': 'go-id',
-          'X-PhoneMake': 'Linux',
-          'X-PhoneModel': 'Firefox',
-          'x-DeviceOS': 'Web',
-          'Accept-Language': 'id',
-          'X-User-Locale': 'id-ID',
-          'X-AppVersion': 'platform-v3.122.0-72edb090',
-          'Gojek-Country-Code': 'ID',
-          'Gojek-Timezone': 'Asia/Jakarta',
-          'X-Platform': 'Web',
-          'X-User-Type': 'merchant',
-          'x-appId': 'go-biz-web-dashboard',
-          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0',
-        },
-        timeout: 15000,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'id',
+            'Authentication-Type': 'go-id',
+            'Origin': 'https://app.gobiz.co.id',
+            'Referer': 'https://app.gobiz.co.id/',
+            'X-User-Locale': 'id-ID',
+            'X-AppVersion': 'platform-v3.125.0-e1923971',
+            'Gojek-Country-Code': 'ID',
+            'Gojek-Timezone': 'Asia/Jakarta',
+            'X-Platform': 'Web',
+            'X-User-Type': 'merchant',
+            'x-appId': 'go-biz-web-dashboard',
+            'x-DeviceOS': 'Web',
+            'x-PhoneMake': fp.make,
+            'x-PhoneModel': fp.model,
+            'User-Agent': fp.ua,
+            'Cookie': session.cookie || `access_token=${session.access_token}; refresh_token=${session.refresh_token}; auth_method=goid`,
+          },
+          timeout: 15000,
+        }
+      );
+    } catch (axiosErr: any) {
+      const status = axiosErr.response?.status;
+      const errCode: string = axiosErr.response?.data?.errors?.[0]?.code || '';
+
+      // 401/403 with a known permanent code = token is dead, re-login required.
+      // Do NOT retry these — it wastes requests and risks rate-limit / account flag.
+      if ((status === 401 || status === 403) && PERMANENT_ERROR_CODES.has(errCode)) {
+        const permanent = new Error(`PERMANENT_AUTH_FAILURE: ${errCode}`);
+        (permanent as any).isPermanent = true;
+        (permanent as any).status = status;
+        throw permanent;
       }
-    );
+
+      // 401 without a recognised code — GoBiz also returns generic 401 for expired tokens.
+      if (status === 401) {
+        const permanent = new Error('PERMANENT_AUTH_FAILURE: token expired or revoked');
+        (permanent as any).isPermanent = true;
+        (permanent as any).status = 401;
+        throw permanent;
+      }
+
+      // Everything else (5xx, network timeout) = transient, let SessionManager retry later.
+      throw axiosErr;
+    }
 
     const data = res.data?.data || res.data;
     const newAccessToken = data.access_token || session.access_token;
@@ -255,4 +323,3 @@ export class GoBizClient {
     }
   }
 }
-

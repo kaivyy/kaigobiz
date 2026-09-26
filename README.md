@@ -6,7 +6,8 @@
 [![Version](https://img.shields.io/badge/version-v1.1.1-10b981?style=for-the-badge)](https://github.com/kaivyy/kaigobiz/releases/tag/v1.1.1)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Hono](https://img.shields.io/badge/Hono.js-Ultra--Fast-e36002?style=for-the-badge&logo=hono&logoColor=white)](https://hono.dev)
-[![Tests](https://img.shields.io/badge/Tests-33%20Passing-22c55e?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev)
+[![Tests](https://img.shields.io/badge/Tests-40%20Passing-22c55e?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev)
+[![Storage](https://img.shields.io/badge/Storage-SQLite%20WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](docs/INTEGRATION_GUIDE.md)
 [![License](https://img.shields.io/badge/License-MIT-8b5cf6?style=for-the-badge)](LICENSE)
 
 <p align="center">
@@ -14,7 +15,7 @@
   Generate dynamic QRIS codes, reconcile transactions in real time, and dispatch instant webhooks to your online store.
 </p>
 
-[Key Features](#-key-features) • [Why KaiGoBiz](#-why-kaigobiz) • [Architecture](#-architecture--payment-flow) • [Quick Start](#-quick-start) • [Integration Modes](#-integration-modes) • [API Reference](#-rest-api-reference)
+[Key Features](#-key-features) • [Why KaiGoBiz](#-why-kaigobiz) • [Architecture](#-architecture--payment-flow) • [Quick Start](#-quick-start) • [E-Commerce Integration Guide](docs/INTEGRATION_GUIDE.md) • [API Reference](#-rest-api-reference)
 
 </div>
 
@@ -22,14 +23,16 @@
 
 ## 🚀 Key Features
 
+- **High-Performance SQLite Storage (WAL Mode)**: Native `node:sqlite` engine running with Write-Ahead Logging (`WAL`), `busy_timeout = 5000ms`, `synchronous = NORMAL`, and partial unique indexes (`CREATE UNIQUE INDEX ... WHERE status = 'PENDING'`) preventing transaction collisions even during peak concurrent checkouts.
 - **Dynamic QRIS Generator**: Generates custom-amount QRIS payments on the fly from any static GoBiz QRIS template using EMVCo Tag 54 injection and CRC16 CCITT recalculation.
-- **Automated Background Reconciliation**: Built-in reconciler polls the GoBiz Wallstreet Journal API every 7 seconds, matches transactions by amount and timestamp, and updates orders to `PAID`.
+- **Collision-Free Dynamic Unique Code**: Automatic micro-nominal adjustment (ADD or SUBTRACT mode) ensuring 100% automated settlement matching without collision.
+- **Automated Background Reconciliation**: Built-in reconciler polls the GoBiz Wallstreet Journal API with anti-bot jitter, matches transactions by amount and timestamp, and updates orders to `PAID`.
 - **GoBiz Sen Currency Normalization**: Automatically converts Gojek Wallstreet minor currency units (sen x100, e.g. 100000 sen = Rp 1.000) to standard Rupiah transparently.
 - **Three Flexible Checkout Modes**:
   1. **Hosted Checkout Page** (`/pay/:paymentId`): Pre-built responsive payment page with QR code, live countdown, and audio notifications.
   2. **Embeddable Modal Widget** (`kaigobiz.js`): Lightweight (~15KB) modal popup script that works on any website with a single `<script>` tag.
   3. **Headless REST API**: Full JSON API for custom mobile apps, e-commerce backends (Laravel, Express, Django), and 100% white-label checkouts.
-- **Instant Webhook Engine**: Dispatches HTTP POST notifications to your backend when customer payments settle, with support for per-order callbacks.
+- **Instant Webhook Engine**: Dispatches HMAC-SHA256 signed HTTP POST notifications to your backend when customer payments settle, protected against SSRF and featuring 5x exponential retry.
 - **QRIS Studio**: Multi-engine QR extraction featuring client-side `jsQR` HTML5 Canvas (drag & drop, clipboard paste `Ctrl+V`, camera) and server-side Python fallback (`zxingcpp`, `pyzbar`, and PDF posters via `pdftoppm`).
 - **Glassmorphism Admin Dashboard**: Manage GoBiz SMS OTP login, test payments, monitor live mutasi transactions, and configure webhooks with modern dark mode UI.
 

@@ -44,10 +44,13 @@ export interface PaymentOrder {
 export interface StorageAdapter {
   getSession(): Promise<SessionData | null>;
   saveSession(session: SessionData): Promise<boolean>;
+  clearSession?(): Promise<boolean>;
   saveTransaction(tx: TransactionData): Promise<boolean>;
   saveTransactions?(txs: TransactionData[]): Promise<boolean>;
   getTransactions(): Promise<TransactionData[]>;
   savePaymentOrder(order: PaymentOrder): Promise<boolean>;
   getPaymentOrder(paymentId: string): Promise<PaymentOrder | null>;
   getAllPaymentOrders?(): Promise<PaymentOrder[]>;
+  backup?(targetPath: string): Promise<boolean>;
+  close?(): void;
 }

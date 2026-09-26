@@ -6,7 +6,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import authRoutes from './routes/auth';
 import paymentRoutes from './routes/payment';
 import transactionRoutes from './routes/transactions';
-import { FileStorageAdapter } from '../core/storage/file-storage';
+import { getStorage } from '../core/storage';
 import { SessionManager } from '../core/session-manager';
 import { GoBizClient } from '../core/gobiz-client';
 import { startBackgroundReconciler } from './reconciler';
@@ -32,7 +32,7 @@ app.route('/api/v1/transactions', transactionRoutes);
 // Checkout / Payment Page for end-customers (similar to Midtrans Snap / Xendit Invoice)
 const checkoutHandler = async (c: any) => {
   const paymentId = c.req.param('paymentId');
-  const storage = new FileStorageAdapter();
+  const storage = getStorage();
   const order = await storage.getPaymentOrder(paymentId);
   if (!order) {
     return c.html(`
@@ -69,7 +69,7 @@ app.use('/*', serveStatic({ root: './dist' }));
 const PORT = Number(process.env.PORT || 3636);
 
 if (process.env.NODE_ENV !== 'test') {
-  const storage = new FileStorageAdapter();
+  const storage = getStorage();
   const manager = new SessionManager(storage);
   const client = new GoBizClient();
   startBackgroundReconciler(storage, manager, client, 7000);

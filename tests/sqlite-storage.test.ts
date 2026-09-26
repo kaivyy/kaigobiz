@@ -109,6 +109,7 @@ describe('SqliteStorageAdapter', () => {
         paymentId: 'pay_1',
         orderId: 'INV-1',
         amount: 50123,
+        uniqueCode: 123,
         status: 'PENDING' as const,
         createdAt: '2026-09-26T10:00:00Z',
         expiresAt: '2026-09-26T10:05:00Z',
@@ -119,6 +120,7 @@ describe('SqliteStorageAdapter', () => {
         paymentId: 'pay_2',
         orderId: 'INV-2',
         amount: 50123, // Identical amount
+        uniqueCode: 123,
         status: 'PENDING' as const,
         createdAt: '2026-09-26T10:01:00Z',
         expiresAt: '2026-09-26T10:06:00Z',

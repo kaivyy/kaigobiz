@@ -60,8 +60,8 @@ describe('KaiGoBiz REST API Server Routes', () => {
     expect(statusBody.status).toBe('PENDING');
 
     // Simulate incoming completed transaction
-    const { FileStorageAdapter } = await import('../src/core/storage/file-storage');
-    const storage = new FileStorageAdapter();
+    const { getStorage } = await import('../src/core/storage');
+    const storage = getStorage();
     await storage.saveTransaction({
       id: 'tx_reconcile_' + Date.now(),
       amount: testAmount,
@@ -147,8 +147,8 @@ describe('KaiGoBiz REST API Server Routes', () => {
   });
 
   it('Reconciliation should prevent duplicate settlement for identical amounts', async () => {
-    const { FileStorageAdapter } = await import('../src/core/storage/file-storage');
-    const storage = new FileStorageAdapter();
+    const { getStorage } = await import('../src/core/storage');
+    const storage = getStorage();
     const testAmount = 42000;
 
     // Create Order A
@@ -214,8 +214,8 @@ describe('KaiGoBiz REST API Server Routes', () => {
   });
 
   it('Reconciliation should match sen units (amount / 100)', async () => {
-    const { FileStorageAdapter } = await import('../src/core/storage/file-storage');
-    const storage = new FileStorageAdapter();
+    const { getStorage } = await import('../src/core/storage');
+    const storage = getStorage();
     const testAmount = 18500;
 
     const res = await app.request('/api/v1/payment/create', {

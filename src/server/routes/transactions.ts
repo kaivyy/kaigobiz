@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
-import { FileStorageAdapter } from '../../core/storage/file-storage';
+import { getStorage } from '../../core/storage';
 import { SessionManager } from '../../core/session-manager';
 import { GoBizClient } from '../../core/gobiz-client';
 
 const transactions = new Hono();
-const storage = new FileStorageAdapter();
+const storage = getStorage();
 const manager = new SessionManager(storage);
 const client = new GoBizClient();
 

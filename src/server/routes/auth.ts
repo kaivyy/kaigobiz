@@ -1,13 +1,13 @@
 import { Hono } from 'hono';
 import { SessionManager } from '../../core/session-manager';
 import { GoBizClient } from '../../core/gobiz-client';
-import { FileStorageAdapter } from '../../core/storage/file-storage';
+import { getStorage } from '../../core/storage';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
 const auth = new Hono();
-const storage = new FileStorageAdapter();
+const storage = getStorage();
 const manager = new SessionManager(storage);
 const client = new GoBizClient();
 

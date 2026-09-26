@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { FileStorageAdapter } from '../../core/storage/file-storage';
+import { getStorage } from '../../core/storage';
 import { SessionManager } from '../../core/session-manager';
 import { GoBizClient } from '../../core/gobiz-client';
 import { generateDynamicQRIS, generateQRCodeDataURL, inspectQRIS } from '../../core/qris-generator';
@@ -17,7 +17,7 @@ import fs from 'fs';
 import os from 'os';
 
 const payment = new Hono();
-const storage = new FileStorageAdapter();
+const storage = getStorage();
 const manager = new SessionManager(storage);
 const client = new GoBizClient();
 
@@ -357,7 +357,31 @@ payment.post('/create', async (c) => {
     callbackUrl: cleanCallbackUrl,
   };
 
-  await storage.savePaymentOrder(order);
+  let orderSaved = false;
+  for (let retry = 0; retry < 5; retry++) {
+    try {
+      await storage.savePaymentOrder(order);
+      orderSaved = true;
+      break;
+    } catch (err: any) {
+      if (err.message && err.message.includes('UNIQUE constraint failed') && useUniqueCode) {
+        const minCode = Math.max(1, Number(uniqueCodeMin) || 1);
+        const maxCode = Math.max(minCode, Math.min(9999, Number(uniqueCodeMax) || 250));
+        const isSubtract = uniqueCodeType === 'SUBTRACT';
+        const newCode = Math.floor(minCode + Math.random() * (maxCode - minCode + 1));
+        const newAmount = isSubtract ? integerAmount - newCode : integerAmount + newCode;
+        order.amount = newAmount;
+        order.uniqueCode = newCode;
+        order.qrisString = generateDynamicQRIS(activeTemplate, newAmount);
+        order.qrisQrUrl = await generateQRCodeDataURL(order.qrisString);
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (!orderSaved) {
+    await storage.savePaymentOrder(order);
+  }
 
   const checkoutUrl = `${reqUrl.origin}/pay/${paymentId}`;
 

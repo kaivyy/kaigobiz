@@ -88,7 +88,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       );
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_order_amount
-        ON payment_orders(amount) WHERE status = 'PENDING';
+        ON payment_orders(amount) WHERE status = 'PENDING' AND unique_code IS NOT NULL;
 
       CREATE INDEX IF NOT EXISTS idx_orders_status_expires
         ON payment_orders(status, expires_at);

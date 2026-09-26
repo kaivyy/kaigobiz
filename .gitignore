@@ -12,6 +12,7 @@ build/
 .env.*
 !.env.example
 .kaigobiz-*.json
+.kaigobiz.db*
 .camoufox-profile/
 
 # Debug & Temporary Artifacts

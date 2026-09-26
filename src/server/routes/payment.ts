@@ -3,7 +3,7 @@ import { getStorage } from '../../core/storage';
 import { SessionManager } from '../../core/session-manager';
 import { GoBizClient } from '../../core/gobiz-client';
 import { generateDynamicQRIS, generateQRCodeDataURL, inspectQRIS } from '../../core/qris-generator';
-import { PaymentOrder } from '../../core/storage/storage.interface';
+import { PaymentOrder, StorageAdapter } from '../../core/storage/storage.interface';
 import {
   getGlobalWebhookUrl,
   sendWebhookNotification,
@@ -204,7 +204,7 @@ const GOBIZ_FETCH_COOLDOWN_MS = 2500;
 async function fetchTransactionsCoalesced(
   manager: SessionManager,
   client: GoBizClient,
-  storage: FileStorageAdapter
+  storage: StorageAdapter
 ): Promise<any[]> {
   const now = Date.now();
   if (now - lastGoBizFetchTime < GOBIZ_FETCH_COOLDOWN_MS) {
@@ -220,7 +220,7 @@ async function fetchTransactionsCoalesced(
       if (session) {
         const freshItems = await client.fetchTransactions(session);
         if (freshItems.length > 0) {
-          await storage.saveTransactions(freshItems);
+          await storage.saveTransactions?.(freshItems);
         }
         lastGoBizFetchTime = Date.now();
         return freshItems;

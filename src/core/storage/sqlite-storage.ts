@@ -23,7 +23,7 @@ export interface SqliteStorageConfig {
 }
 
 export class SqliteStorageAdapter implements StorageAdapter {
-  private db: DatabaseSync;
+  private db: any;
   private dbPath: string;
 
   constructor(config?: SqliteStorageConfig) {
@@ -351,7 +351,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
   async getAllPaymentOrders(): Promise<PaymentOrder[]> {
     try {
       const rows = this.db.prepare('SELECT * FROM payment_orders ORDER BY created_at DESC').all();
-      return rows.map((r) => this.rowToPaymentOrder(r));
+      return rows.map((r: any) => this.rowToPaymentOrder(r));
     } catch {
       return [];
     }

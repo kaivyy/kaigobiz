@@ -103,7 +103,7 @@ auth.post('/refresh-profile', async (c) => {
 });
 
 auth.post('/logout', async (c) => {
-  await storage.clearSession();
+  await storage.clearSession?.();
   return c.json({
     success: true,
     message: 'Sesi GoBiz berhasil diputuskan.',

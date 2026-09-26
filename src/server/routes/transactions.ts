@@ -23,7 +23,7 @@ transactions.get('/', async (c) => {
   try {
     const items = await client.fetchTransactions(session);
     if (items.length > 0) {
-      await storage.saveTransactions(items);
+      await storage.saveTransactions?.(items);
     }
     const all = (await storage.getTransactions()).filter((tx) => !tx.id.startsWith('tx_reconcile'));
     return c.json({ success: true, connected: true, count: all.length, transactions: all });

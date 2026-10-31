@@ -43,7 +43,7 @@ auth.get('/status', async (c) => {
   }
 
   return c.json({
-    connected: !!session && !isExpired,
+    connected: !!session && !isExpired && !manager.needsRelogin,
     needs_relogin: manager.needsRelogin,
     session: session
       ? {
@@ -136,7 +136,7 @@ auth.post('/request-otp', async (c) => {
   }
   lastOtpRequestTimestamp = now;
 
-  // 1. First attempt direct API
+  // Try direct API first
   try {
     const result = await client.requestOTP(cleanPhone);
     if (result && result.otpToken) {
@@ -144,7 +144,7 @@ auth.post('/request-otp', async (c) => {
     }
   } catch {}
 
-  // 2. Fallback to Camoufox persistent worker
+  // Fallback to Camoufox persistent worker
   try {
     if (fs.existsSync(STATE_FILE)) {
       try {
@@ -157,6 +157,14 @@ auth.post('/request-otp', async (c) => {
     }
     if (fs.existsSync(COMMAND_FILE)) {
       try { fs.unlinkSync(COMMAND_FILE); } catch {}
+    }
+
+    const profileDir = path.join(process.cwd(), '.camoufox-profile');
+    for (const lockFile of ['.parentlock', 'lock']) {
+      const lockPath = path.join(profileDir, lockFile);
+      if (fs.existsSync(lockPath)) {
+        try { fs.unlinkSync(lockPath); } catch {}
+      }
     }
 
     const worker = spawn('python3', [WORKER_SCRIPT, cleanPhone], {
@@ -232,11 +240,11 @@ auth.post('/verify-otp', async (c) => {
         try {
           const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
           if (state.status === 'success') {
-            let session = await manager.getSession();
-            if (!session && state.session) {
+            if (state.session) {
               await manager.saveSession(state.session);
-              session = state.session;
+              return c.json({ success: true, session: state.session });
             }
+            const session = await manager.getSession();
             if (session) {
               return c.json({ success: true, session });
             }

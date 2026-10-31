@@ -75,9 +75,9 @@ if (process.env.NODE_ENV !== 'test') {
   startBackgroundReconciler(storage, manager, client, 7000);
 
   serve({ fetch: app.fetch, port: PORT }, (info) => {
-    console.log(`\n🚀 KaiGoBiz Payment Gateway Server running on http://localhost:${info.port}`);
-    console.log(`📱 UI Dashboard: http://localhost:${info.port}`);
-    console.log(`🔌 Embed Widget Script: http://localhost:${info.port}/kaigobiz.js\n`);
+    console.log(`\nKaiGoBiz Payment Gateway Server running on http://localhost:${info.port}`);
+    console.log(`UI Dashboard: http://localhost:${info.port}`);
+    console.log(`Embed Widget Script: http://localhost:${info.port}/kaigobiz.js\n`);
   });
 }
 

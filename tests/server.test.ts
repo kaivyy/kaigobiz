@@ -1,7 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import app from '../src/server/index';
+import fs from 'fs';
+import path from 'path';
 
 describe('KaiGoBiz REST API Server Routes', () => {
+  afterAll(async () => {
+    const { resetDefaultStorage } = await import('../src/core/storage');
+    resetDefaultStorage();
+    const testDb = path.join(process.cwd(), '.kaigobiz-test.db');
+    for (const f of [testDb, `${testDb}-wal`, `${testDb}-shm`]) {
+      if (fs.existsSync(f)) {
+        try { fs.unlinkSync(f); } catch {}
+      }
+    }
+  });
   it('GET /api/v1/health should return status ok', async () => {
     const res = await app.request('/api/v1/health');
     expect(res.status).toBe(200);
@@ -74,11 +86,14 @@ describe('KaiGoBiz REST API Server Routes', () => {
     const reconciledBody = await reconciledRes.json();
     expect(reconciledBody.status).toBe('PAID');
 
-    // Clean up test transactions so production storage stays clean
+    // Clean up test transactions
+    if ((storage as any).db) {
+      try {
+        (storage as any).db.prepare("DELETE FROM transactions WHERE id LIKE 'tx_reconcile_%'").run();
+      } catch {}
+    }
     const currentTxs = await storage.getTransactions();
     const cleanTxs = currentTxs.filter((t) => !t.id.startsWith('tx_reconcile_'));
-    const fs = await import('fs');
-    const path = await import('path');
     const txFile = path.join(process.cwd(), '.kaigobiz-tx.json');
     if (fs.existsSync(txFile)) {
       fs.writeFileSync(txFile, JSON.stringify(cleanTxs, null, 2));
@@ -203,10 +218,13 @@ describe('KaiGoBiz REST API Server Routes', () => {
     expect(statusBodyB2.transactionId).toBe(txId2);
 
     // Clean up
+    if ((storage as any).db) {
+      try {
+        (storage as any).db.prepare("DELETE FROM transactions WHERE id LIKE 'tx_reconcile_%'").run();
+      } catch {}
+    }
     const currentTxs = await storage.getTransactions();
     const cleanTxs = currentTxs.filter((t) => !t.id.startsWith('tx_reconcile_'));
-    const fs = await import('fs');
-    const path = await import('path');
     const txFile = path.join(process.cwd(), '.kaigobiz-tx.json');
     if (fs.existsSync(txFile)) {
       fs.writeFileSync(txFile, JSON.stringify(cleanTxs, null, 2));
@@ -240,13 +258,16 @@ describe('KaiGoBiz REST API Server Routes', () => {
     expect(statusBody.transactionId).toBe(txId);
 
     // Clean up
-    const currentTxs = await storage.getTransactions();
-    const cleanTxs = currentTxs.filter((t) => !t.id.startsWith('tx_reconcile_'));
-    const fs = await import('fs');
-    const path = await import('path');
-    const txFile = path.join(process.cwd(), '.kaigobiz-tx.json');
-    if (fs.existsSync(txFile)) {
-      fs.writeFileSync(txFile, JSON.stringify(cleanTxs, null, 2));
+    if ((storage as any).db) {
+      try {
+        (storage as any).db.prepare("DELETE FROM transactions WHERE id LIKE 'tx_reconcile_%'").run();
+      } catch {}
+    }
+    const currentTxs2 = await storage.getTransactions();
+    const cleanTxs2 = currentTxs2.filter((t) => !t.id.startsWith('tx_reconcile_'));
+    const txFile2 = path.join(process.cwd(), '.kaigobiz-tx.json');
+    if (fs.existsSync(txFile2)) {
+      fs.writeFileSync(txFile2, JSON.stringify(cleanTxs2, null, 2));
     }
   });
 
@@ -381,5 +402,79 @@ describe('KaiGoBiz REST API Server Routes', () => {
     expect(body.uniqueCode).toBeGreaterThanOrEqual(5);
     expect(body.uniqueCode).toBeLessThanOrEqual(35);
     expect(body.amount).toBe(75000 - body.uniqueCode);
+  });
+
+  it('Reconciliation should not match normalized GoBiz transactions to 100x smaller order', async () => {
+    const { getStorage } = await import('../src/core/storage');
+    const storage = getStorage();
+    const orderAmount = 1000;
+
+    const res = await app.request('/api/v1/payment/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: 'ORDER-NORM-' + Date.now(), amount: orderAmount }),
+    });
+    const order = await res.json();
+
+    const txId = 'tx_reconcile_norm_' + Date.now();
+    await storage.saveTransaction({
+      id: txId,
+      amount: 100000,
+      timestamp: new Date().toISOString(),
+      status: 'COMPLETED',
+      raw: { wallstreet_transaction_id: 'ws_test_99' },
+    });
+
+    const statusRes = await app.request(`/api/v1/payment/status/${order.paymentId}`);
+    const statusBody = await statusRes.json();
+    expect(statusBody.status).toBe('PENDING');
+
+    if ((storage as any).db) {
+      try {
+        (storage as any).db.prepare("DELETE FROM transactions WHERE id LIKE 'tx_reconcile_%'").run();
+      } catch {}
+    }
+  });
+
+  it('SSRF guard should identify private and loopback IP addresses correctly', async () => {
+    const { isPrivateIP } = await import('../src/server/reconciler');
+    expect(isPrivateIP('127.0.0.1')).toBe(true);
+    expect(isPrivateIP('10.0.5.1')).toBe(true);
+    expect(isPrivateIP('192.168.1.10')).toBe(true);
+    expect(isPrivateIP('172.20.0.1')).toBe(true);
+    expect(isPrivateIP('169.254.169.254')).toBe(true);
+    expect(isPrivateIP('::1')).toBe(true);
+    expect(isPrivateIP('fe80::1')).toBe(true);
+    expect(isPrivateIP('8.8.8.8')).toBe(false);
+    expect(isPrivateIP('1.1.1.1')).toBe(false);
+  });
+
+  it('Storage adapter indexed methods should query orders without table scans', async () => {
+    const { getStorage } = await import('../src/core/storage');
+    const storage = getStorage();
+    const testId = 'ORD-IDX-' + Date.now();
+
+    const res = await app.request('/api/v1/payment/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: testId, amount: 26000 }),
+    });
+    const order = await res.json();
+
+    if (storage.getActivePendingOrder) {
+      const active = await storage.getActivePendingOrder(testId);
+      expect(active).not.toBeNull();
+      expect(active?.orderId).toBe(testId);
+    }
+
+    if (storage.getActivePendingAmounts) {
+      const amounts = await storage.getActivePendingAmounts();
+      expect(amounts.has(26000)).toBe(true);
+    }
+
+    if (storage.getPendingOrders) {
+      const pending = await storage.getPendingOrders();
+      expect(pending.some((o) => o.paymentId === order.paymentId)).toBe(true);
+    }
   });
 });

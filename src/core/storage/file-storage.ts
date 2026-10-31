@@ -130,6 +130,61 @@ export class FileStorageAdapter implements StorageAdapter {
     return await this.getAllOrders();
   }
 
+  async getActivePendingOrder(orderId: string): Promise<PaymentOrder | null> {
+    const orders = await this.getAllOrders();
+    const now = Date.now();
+    return (
+      orders.find(
+        (o) =>
+          o.orderId === orderId &&
+          o.status === 'PENDING' &&
+          new Date(o.expiresAt).getTime() > now
+      ) || null
+    );
+  }
+
+  async getActivePendingAmounts(): Promise<Set<number>> {
+    const orders = await this.getAllOrders();
+    const now = Date.now();
+    const set = new Set<number>();
+    for (const o of orders) {
+      if (o.status === 'PENDING' && new Date(o.expiresAt).getTime() > now) {
+        set.add(o.amount);
+      }
+    }
+    return set;
+  }
+
+  async getUsedTransactionIds(): Promise<Set<string>> {
+    const orders = await this.getAllOrders();
+    const set = new Set<string>();
+    for (const o of orders) {
+      if (o.status === 'PAID' && o.transactionId) {
+        set.add(o.transactionId);
+      }
+    }
+    return set;
+  }
+
+  async getPendingOrders(): Promise<PaymentOrder[]> {
+    const orders = await this.getAllOrders();
+    return orders
+      .filter((o) => o.status === 'PENDING')
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
+  async getFailedCallbackOrders(maxRetries: number = 5, retryCooldownMs: number = 30000): Promise<PaymentOrder[]> {
+    const orders = await this.getAllOrders();
+    const now = Date.now();
+    return orders.filter(
+      (o) =>
+        o.status === 'PAID' &&
+        o.callbackStatus === 'FAILED' &&
+        (o.callbackRetries || 0) < maxRetries &&
+        (!o.lastCallbackAttempt || now - new Date(o.lastCallbackAttempt).getTime() >= retryCooldownMs)
+    );
+  }
+
   private async getAllOrders(): Promise<PaymentOrder[]> {
     try {
       if (!fs.existsSync(this.ordersFile)) return [];

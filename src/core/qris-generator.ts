@@ -40,16 +40,17 @@ export function calculateCRC16(payload: string): string {
  */
 export function parseTLV(payload: string): TLV[] {
   const items: TLV[] = [];
+  const buf = Buffer.from(payload, 'utf-8');
   let index = 0;
-  while (index < payload.length) {
-    if (index + 4 > payload.length) break;
-    const tag = payload.substring(index, index + 2);
-    const lenStr = payload.substring(index + 2, index + 4);
+  while (index < buf.length) {
+    if (index + 4 > buf.length) break;
+    const tag = buf.subarray(index, index + 2).toString('utf-8');
+    const lenStr = buf.subarray(index + 2, index + 4).toString('utf-8');
     const length = parseInt(lenStr, 10);
-    if (isNaN(length) || index + 4 + length > payload.length) {
+    if (isNaN(length) || index + 4 + length > buf.length) {
       break;
     }
-    const value = payload.substring(index + 4, index + 4 + length);
+    const value = buf.subarray(index + 4, index + 4 + length).toString('utf-8');
     items.push({ tag, length, value });
     index += 4 + length;
   }
@@ -99,7 +100,11 @@ export function inspectQRIS(qrisString: string): QRISDetails {
  * Generates a dynamic QRIS string by embedding/updating Tag 54 (Amount),
  * preserving static Tag 01 ('11'), and recalculating EMVCo CRC16 checksum (Tag 63).
  */
-export function generateDynamicQRIS(staticTemplate: string, amount: number): string {
+export function generateDynamicQRIS(
+  staticTemplate: string,
+  amount: number,
+  options?: { forceDynamicTag?: boolean }
+): string {
   if (!staticTemplate || !staticTemplate.trim()) {
     return '';
   }
@@ -118,10 +123,17 @@ export function generateDynamicQRIS(staticTemplate: string, amount: number): str
   // Filter out any existing CRC tag (Tag 63)
   const tags = items.filter((i) => i.tag !== '63');
 
+  if (options?.forceDynamicTag) {
+    const idx01 = tags.findIndex((i) => i.tag === '01');
+    if (idx01 !== -1) {
+      tags[idx01] = { tag: '01', length: 2, value: '12' };
+    }
+  }
+
   const amountStr = Math.round(numericAmount).toString();
   const tag54Obj = {
     tag: '54',
-    length: amountStr.length,
+    length: Buffer.byteLength(amountStr, 'utf-8'),
     value: amountStr,
   };
 
@@ -140,7 +152,8 @@ export function generateDynamicQRIS(staticTemplate: string, amount: number): str
 
   let payload = '';
   for (const item of tags) {
-    const lenStr = item.value.length.toString().padStart(2, '0');
+    const byteLen = Buffer.byteLength(item.value, 'utf-8');
+    const lenStr = byteLen.toString().padStart(2, '0');
     payload += `${item.tag}${lenStr}${item.value}`;
   }
 

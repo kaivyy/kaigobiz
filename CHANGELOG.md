@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.2] - 2026-10-31
+
+### Fixed
+- Session Persistence on OTP Verification: Fixed an issue in `/api/v1/auth/verify-otp` where successful OTP verification results from Camoufox worker were not saved if a previous session already existed in storage.
+- Reconciliation False-Positive Protection: Enforced strict direct amount matching priority over minor unit (sen) conversion. Normalized GoBiz transactions with `wallstreet_transaction_id` or QRIS metadata are protected against false matching with 100x smaller orders.
+- Async Non-Blocking QR Decoding: Migrated `POST /api/v1/payment/decode-qr` from synchronous execution to asynchronous execution with `execFile`, preventing Node.js event loop stalls during image scanning.
+- Test Database Isolation: Configured automated tests to run on isolated in-memory SQLite (`:memory:`) storage, preventing test records and dummy transactions from polluting production databases.
+- Webhook Callback Concurrency: Resolved potential race conditions between immediate order status persistence and asynchronous webhook notifications by refreshing latest order state before saving callback updates.
+- Stale Process Lock Cleanup: Automatically removed residual `.parentlock` and `lock` files in the browser profile directory prior to launching the login worker.
+- UTF-8 Multi-Byte Length Handling: Updated QRIS TLV parsing to compute byte length with `Buffer.from` instead of character count, preventing checksum mismatches for merchant names with special characters.
+
+### Performance & Security
+- SQLite Index Query Optimization: Replaced full-table scans across `/create` and `/status` routes with direct SQL index queries (`getActivePendingOrder`, `getActivePendingAmounts`, and `getUsedTransactionIds`).
+- Configuration Caching: Added in-memory cache for QRIS templates and webhook configuration with automatic invalidation on updates, eliminating synchronous file reads per request.
+- SSRF Defense Enhancement: Strengthened webhook URL validation with link-local, carrier-grade NAT, IPv4-mapped IPv6 checks, loopback domain blocking, and DNS resolution verification.
+- Deterministic Unique Code Allocation: Added sequential search fallback when randomized candidate unique codes collide during high-density flash sale traffic.
+
+### Tests
+- Expanded Test Coverage: Added automated tests for normalized sen protection, SSRF private IP detection, and indexed storage methods (43 passing tests).
+
+---
+
 ## [1.1.1] - 2026-09-16
 
 ### ✨ Added

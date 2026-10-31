@@ -93,6 +93,12 @@ export class SqliteStorageAdapter implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_orders_status_expires
         ON payment_orders(status, expires_at);
 
+      CREATE INDEX IF NOT EXISTS idx_orders_order_id_status
+        ON payment_orders(order_id, status);
+
+      CREATE INDEX IF NOT EXISTS idx_orders_paid_tx
+        ON payment_orders(transaction_id) WHERE status = 'PAID' AND transaction_id IS NOT NULL;
+
       CREATE INDEX IF NOT EXISTS idx_orders_created_at
         ON payment_orders(created_at);
 
@@ -352,6 +358,88 @@ export class SqliteStorageAdapter implements StorageAdapter {
     try {
       const rows = this.db.prepare('SELECT * FROM payment_orders ORDER BY created_at DESC').all();
       return rows.map((r: any) => this.rowToPaymentOrder(r));
+    } catch {
+      return [];
+    }
+  }
+
+  async getActivePendingOrder(orderId: string): Promise<PaymentOrder | null> {
+    try {
+      const row = this.db
+        .prepare(
+          "SELECT * FROM payment_orders WHERE order_id = ? AND status = 'PENDING' AND expires_at > ? ORDER BY created_at DESC LIMIT 1"
+        )
+        .get(orderId, new Date().toISOString());
+      if (!row) return null;
+      return this.rowToPaymentOrder(row);
+    } catch {
+      return null;
+    }
+  }
+
+  async getActivePendingAmounts(): Promise<Set<number>> {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT amount FROM payment_orders WHERE status = 'PENDING' AND expires_at > ?"
+        )
+        .all(new Date().toISOString()) as Array<{ amount: number }>;
+      const set = new Set<number>();
+      for (const r of rows) {
+        set.add(Number(r.amount));
+      }
+      return set;
+    } catch {
+      return new Set<number>();
+    }
+  }
+
+  async getUsedTransactionIds(): Promise<Set<string>> {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT transaction_id FROM payment_orders WHERE status = 'PAID' AND transaction_id IS NOT NULL"
+        )
+        .all() as Array<{ transaction_id: string }>;
+      const set = new Set<string>();
+      for (const r of rows) {
+        if (r.transaction_id) {
+          set.add(r.transaction_id);
+        }
+      }
+      return set;
+    } catch {
+      return new Set<string>();
+    }
+  }
+
+  async getPendingOrders(): Promise<PaymentOrder[]> {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM payment_orders WHERE status = 'PENDING' ORDER BY created_at ASC"
+        )
+        .all();
+      return rows.map((r: any) => this.rowToPaymentOrder(r));
+    } catch {
+      return [];
+    }
+  }
+
+  async getFailedCallbackOrders(maxRetries: number = 5, retryCooldownMs: number = 30000): Promise<PaymentOrder[]> {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM payment_orders WHERE status = 'PAID' AND callback_status = 'FAILED' AND (callback_retries IS NULL OR callback_retries < ?)"
+        )
+        .all(maxRetries);
+      const now = Date.now();
+      return rows
+        .map((r: any) => this.rowToPaymentOrder(r))
+        .filter(
+          (o: PaymentOrder) =>
+            !o.lastCallbackAttempt || now - new Date(o.lastCallbackAttempt).getTime() >= retryCooldownMs
+        );
     } catch {
       return [];
     }

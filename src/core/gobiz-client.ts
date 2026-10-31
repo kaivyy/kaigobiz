@@ -143,7 +143,6 @@ export class GoBizClient {
       throw err;
     }
 
-    // Random jitter 200-900ms — avoids fixed-interval fingerprinting by GoBiz rate limiter.
     await new Promise((r) => setTimeout(r, 200 + Math.floor(Math.random() * 700)));
 
     const fp = GoBizClient.pickUA();
@@ -185,8 +184,6 @@ export class GoBizClient {
       const status = axiosErr.response?.status;
       const errCode: string = axiosErr.response?.data?.errors?.[0]?.code || '';
 
-      // 401/403 with a known permanent code = token is dead, re-login required.
-      // Do NOT retry these — it wastes requests and risks rate-limit / account flag.
       if ((status === 401 || status === 403) && PERMANENT_ERROR_CODES.has(errCode)) {
         const permanent = new Error(`PERMANENT_AUTH_FAILURE: ${errCode}`);
         (permanent as any).isPermanent = true;
@@ -194,7 +191,6 @@ export class GoBizClient {
         throw permanent;
       }
 
-      // 401 without a recognised code — GoBiz also returns generic 401 for expired tokens.
       if (status === 401) {
         const permanent = new Error('PERMANENT_AUTH_FAILURE: token expired or revoked');
         (permanent as any).isPermanent = true;
@@ -202,7 +198,6 @@ export class GoBizClient {
         throw permanent;
       }
 
-      // Everything else (5xx, network timeout) = transient, let SessionManager retry later.
       throw axiosErr;
     }
 

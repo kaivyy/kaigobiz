@@ -2,20 +2,42 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import dns from 'dns';
 import { StorageAdapter, PaymentOrder, TransactionData } from '../core/storage/storage.interface';
 import { SessionManager } from '../core/session-manager';
 import { GoBizClient } from '../core/gobiz-client';
 
 const CONFIG_FILE = path.join(process.cwd(), '.kaigobiz-config.json');
 
-export function getGlobalWebhookUrl(): string | null {
+let cachedConfig: Record<string, any> | null = null;
+let lastConfigCheck = 0;
+
+export function getCachedConfig(): Record<string, any> {
+  const now = Date.now();
+  if (cachedConfig && now - lastConfigCheck < 2000) {
+    return cachedConfig;
+  }
+  lastConfigCheck = now;
   if (fs.existsSync(CONFIG_FILE)) {
     try {
-      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-      if (config.webhookUrl && typeof config.webhookUrl === 'string' && config.webhookUrl.trim()) {
-        return config.webhookUrl.trim();
-      }
-    } catch {}
+      cachedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+      return cachedConfig || {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+export function invalidateConfigCache(): void {
+  cachedConfig = null;
+  lastConfigCheck = 0;
+}
+
+export function getGlobalWebhookUrl(): string | null {
+  const config = getCachedConfig();
+  if (config.webhookUrl && typeof config.webhookUrl === 'string' && config.webhookUrl.trim()) {
+    return config.webhookUrl.trim();
   }
   if (process.env.WEBHOOK_URL && process.env.WEBHOOK_URL.trim()) {
     return process.env.WEBHOOK_URL.trim();
@@ -24,18 +46,46 @@ export function getGlobalWebhookUrl(): string | null {
 }
 
 export function getWebhookSecret(): string | null {
-  if (fs.existsSync(CONFIG_FILE)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-      if (config.webhookSecret && typeof config.webhookSecret === 'string' && config.webhookSecret.trim()) {
-        return config.webhookSecret.trim();
-      }
-    } catch {}
+  const config = getCachedConfig();
+  if (config.webhookSecret && typeof config.webhookSecret === 'string' && config.webhookSecret.trim()) {
+    return config.webhookSecret.trim();
   }
   if (process.env.WEBHOOK_SECRET && process.env.WEBHOOK_SECRET.trim()) {
     return process.env.WEBHOOK_SECRET.trim();
   }
   return null;
+}
+
+export function isPrivateIP(ip: string): boolean {
+  if (!ip || typeof ip !== 'string') return true;
+  const clean = ip.trim().toLowerCase();
+  if (clean === 'localhost' || clean === '127.0.0.1' || clean === '::1' || clean === '0.0.0.0') {
+    return true;
+  }
+  const ipv4Match = clean.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const octets = ipv4Match.slice(1, 5).map(Number);
+    if (octets.some((o) => o > 255)) return true;
+    const [o1, o2] = octets;
+    if (o1 === 0 || o1 === 127 || o1 === 10) return true;
+    if (o1 === 169 && o2 === 254) return true;
+    if (o1 === 192 && o2 === 168) return true;
+    if (o1 === 172 && o2 >= 16 && o2 <= 31) return true;
+    if (o1 >= 224) return true;
+    return false;
+  }
+  if (
+    clean.startsWith('fe80:') ||
+    clean.startsWith('fc00:') ||
+    clean.startsWith('fd00:') ||
+    clean.startsWith('::ffff:127.') ||
+    clean.startsWith('::ffff:10.') ||
+    clean.startsWith('::ffff:192.168.') ||
+    (clean.includes(':') && (clean.endsWith(':1') || clean === '::'))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function isSafeWebhookUrl(rawUrl: string): boolean {
@@ -47,31 +97,28 @@ export function isSafeWebhookUrl(rawUrl: string): boolean {
     }
     const hostname = parsed.hostname.toLowerCase();
 
-    // Allow localhost during unit testing or if explicitly enabled in development
     if (process.env.NODE_ENV === 'test' || process.env.ALLOW_LOCAL_WEBHOOKS === 'true') {
       return true;
     }
 
-    if (hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
-      return false;
-    }
-    if (hostname === '::1' || hostname === '[::1]' || hostname.startsWith('::ffff:')) {
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.lan') ||
+      hostname.includes('127.0.0.1')
+    ) {
       return false;
     }
 
-    const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-    const match = hostname.match(ipv4Regex);
-    if (match) {
-      const octets = match.slice(1, 5).map(Number);
-      if (octets.some((o) => o > 255)) return false;
-      const [o1, o2] = octets;
-      if (o1 === 0) return false;
-      if (o1 === 127) return false;
-      if (o1 === 10) return false;
-      if (o1 === 169 && o2 === 254) return false;
-      if (o1 === 192 && o2 === 168) return false;
-      if (o1 === 172 && o2 >= 16 && o2 <= 31) return false;
+    if (/^\d+$/.test(hostname) || /^0x[0-9a-f]+$/i.test(hostname)) {
+      return false;
     }
+
+    if (isPrivateIP(hostname)) {
+      return false;
+    }
+
     return true;
   } catch {
     return false;
@@ -97,6 +144,19 @@ export async function sendWebhookNotification(
   if (!isSafeWebhookUrl(targetUrl)) {
     console.error(`[KaiGoBiz Webhook] Rejected unsafe webhook URL: ${targetUrl}`);
     return false;
+  }
+
+  if (process.env.NODE_ENV !== 'test' && process.env.ALLOW_LOCAL_WEBHOOKS !== 'true') {
+    try {
+      const parsed = new URL(targetUrl);
+      const res = await dns.promises.lookup(parsed.hostname);
+      if (isPrivateIP(res.address)) {
+        console.error(`[KaiGoBiz Webhook] Webhook destination resolved to private IP ${res.address}: ${targetUrl}`);
+        return false;
+      }
+    } catch {
+      return false;
+    }
   }
 
   const timestamp = new Date().toISOString();
@@ -154,9 +214,18 @@ export function isTransactionMatch(
 ): boolean {
   if (tx.status !== 'COMPLETED') return false;
   if (usedTxIds.has(tx.id)) return false;
-  const isAmountMatch =
-    Math.abs(tx.amount - orderAmount) < 0.01 || Math.abs(tx.amount / 100 - orderAmount) < 0.01;
-  if (!isAmountMatch) return false;
+
+  const isDirectMatch = Math.abs(tx.amount - orderAmount) < 0.01;
+
+  // Fallback for raw sen only when not already normalized by GoBiz client
+  const isAlreadyNormalized = Boolean(
+    tx.raw?.wallstreet_transaction_id ||
+    tx.raw?.channel_type === 'STATIC_QR' ||
+    tx.raw?.service_type === 'QRIS'
+  );
+  const isSenMatch = !isAlreadyNormalized && Math.abs(tx.amount / 100 - orderAmount) < 0.01;
+
+  if (!isDirectMatch && !isSenMatch) return false;
   const txTime = new Date(tx.timestamp).getTime();
   return txTime >= orderCreatedAt - 15000;
 }
@@ -170,7 +239,6 @@ export async function reconcilePaymentOrders(
 ): Promise<number> {
   const now = Date.now();
 
-  // Proactively check and refresh session in the background even if no orders are pending
   if (now - lastPeriodicRefresh >= 60_000) {
     lastPeriodicRefresh = now;
     try {
@@ -180,14 +248,20 @@ export async function reconcilePaymentOrders(
     }
   }
 
-  if (!storage.getAllPaymentOrders) return 0;
+  const pendingOrders = storage.getPendingOrders
+    ? await storage.getPendingOrders()
+    : ((await storage.getAllPaymentOrders?.()) || [])
+        .filter((o) => o.status === 'PENDING')
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
-  const orders = await storage.getAllPaymentOrders();
-  const pendingOrders = orders
-    .filter((o) => o.status === 'PENDING')
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  if (pendingOrders.length === 0) {
+    return 0;
+  }
 
-  const usedTxIds = getUsedTransactionIds(orders);
+  const usedTxIds = storage.getUsedTransactionIds
+    ? await storage.getUsedTransactionIds()
+    : getUsedTransactionIds((await storage.getAllPaymentOrders?.()) || []);
+
   let freshTxs: TransactionData[] = [];
   let fetchedFromGoBiz = false;
   let reconciledCount = 0;
@@ -202,14 +276,12 @@ export async function reconcilePaymentOrders(
 
     const orderCreatedAt = new Date(order.createdAt).getTime();
 
-    // Check existing stored transactions first (match earliest valid transaction)
     let localTxs = await storage.getTransactions();
     const localCandidates = localTxs
       .filter((tx) => isTransactionMatch(tx, order.amount, orderCreatedAt, usedTxIds))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     let matched = localCandidates[0];
 
-    // If not found locally, fetch fresh transactions from GoBiz session once
     if (!matched && !fetchedFromGoBiz) {
       try {
         const session = await manager.refreshIfNeeded();
@@ -220,7 +292,7 @@ export async function reconcilePaymentOrders(
           }
         }
       } catch {
-        // Session or network error, ignore
+        // Session or network error
       }
       fetchedFromGoBiz = true;
 
@@ -239,6 +311,8 @@ export async function reconcilePaymentOrders(
       usedTxIds.add(matched.id);
       reconciledCount++;
 
+      await storage.savePaymentOrder(order);
+
       const callbackUrl = order.callbackUrl || getGlobalWebhookUrl();
       if (callbackUrl && isSafeWebhookUrl(callbackUrl)) {
         sendWebhookNotification(callbackUrl, order, matched)
@@ -248,25 +322,26 @@ export async function reconcilePaymentOrders(
           })
           .catch(() => {});
       }
-
-      await storage.savePaymentOrder(order);
     }
   }
 
-  // Proactively retry failed webhook deliveries for PAID orders (up to 5 attempts, with 30s interval)
-  const failedOrders = orders.filter(
-    (o) =>
-      o.status === 'PAID' &&
-      o.callbackStatus === 'FAILED' &&
-      (o.callbackRetries || 0) < 5 &&
-      (!o.lastCallbackAttempt || now - new Date(o.lastCallbackAttempt).getTime() >= 30_000)
-  );
+  const failedOrders = storage.getFailedCallbackOrders
+    ? await storage.getFailedCallbackOrders(5, 30000)
+    : ((await storage.getAllPaymentOrders?.()) || []).filter(
+        (o) =>
+          o.status === 'PAID' &&
+          o.callbackStatus === 'FAILED' &&
+          (o.callbackRetries || 0) < 5 &&
+          (!o.lastCallbackAttempt || now - new Date(o.lastCallbackAttempt).getTime() >= 30_000)
+      );
 
   for (const failedOrder of failedOrders) {
     const target = failedOrder.callbackUrl || getGlobalWebhookUrl();
     if (target && isSafeWebhookUrl(target)) {
       failedOrder.callbackRetries = (failedOrder.callbackRetries || 0) + 1;
       failedOrder.lastCallbackAttempt = new Date().toISOString();
+      await storage.savePaymentOrder(failedOrder);
+
       sendWebhookNotification(target, failedOrder, null)
         .then((success) => {
           if (success) {
@@ -275,7 +350,6 @@ export async function reconcilePaymentOrders(
           }
         })
         .catch(() => {});
-      await storage.savePaymentOrder(failedOrder);
     }
   }
 

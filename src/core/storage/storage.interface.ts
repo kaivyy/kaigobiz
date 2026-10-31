@@ -51,6 +51,11 @@ export interface StorageAdapter {
   savePaymentOrder(order: PaymentOrder): Promise<boolean>;
   getPaymentOrder(paymentId: string): Promise<PaymentOrder | null>;
   getAllPaymentOrders?(): Promise<PaymentOrder[]>;
+  getActivePendingOrder?(orderId: string): Promise<PaymentOrder | null>;
+  getActivePendingAmounts?(): Promise<Set<number>>;
+  getUsedTransactionIds?(): Promise<Set<string>>;
+  getPendingOrders?(): Promise<PaymentOrder[]>;
+  getFailedCallbackOrders?(maxRetries: number, retryCooldownMs: number): Promise<PaymentOrder[]>;
   backup?(targetPath: string): Promise<boolean>;
   close?(): void;
 }

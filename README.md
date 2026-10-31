@@ -3,10 +3,10 @@
 # ⚡ KaiGoBiz
 ### High-Performance GoBiz Payment Gateway, Dynamic QRIS Generator & Mutasi Scraper
 
-[![Version](https://img.shields.io/badge/version-v1.1.1-10b981?style=for-the-badge)](https://github.com/kaivyy/kaigobiz/releases/tag/v1.1.1)
+[![Version](https://img.shields.io/badge/version-v1.1.2-10b981?style=for-the-badge)](https://github.com/kaivyy/kaigobiz/releases/tag/v1.1.2)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Hono](https://img.shields.io/badge/Hono.js-Ultra--Fast-e36002?style=for-the-badge&logo=hono&logoColor=white)](https://hono.dev)
-[![Tests](https://img.shields.io/badge/Tests-40%20Passing-22c55e?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev)
+[![Tests](https://img.shields.io/badge/Tests-43%20Passing-22c55e?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev)
 [![Storage](https://img.shields.io/badge/Storage-SQLite%20WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](docs/INTEGRATION_GUIDE.md)
 [![License](https://img.shields.io/badge/License-MIT-8b5cf6?style=for-the-badge)](LICENSE)
 

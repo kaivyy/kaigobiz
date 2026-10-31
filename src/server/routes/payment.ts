@@ -10,11 +10,16 @@ import {
   getUsedTransactionIds,
   isTransactionMatch,
   isSafeWebhookUrl,
+  getCachedConfig,
+  invalidateConfigCache,
 } from '../reconciler';
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+
+const execFileAsync = promisify(execFile);
 
 const payment = new Hono();
 const storage = getStorage();
@@ -27,13 +32,9 @@ const FALLBACK_DUMMY_TEMPLATE =
   '00020101021126390013ID.GO-JEK.WWW01189360091430000000005204581253033605802ID5914KAI GOBIZ SHOP6007JAKARTA63045B63';
 
 function getActiveTemplate(): string {
-  if (fs.existsSync(CONFIG_FILE)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-      if (config.staticQrisTemplate && config.staticQrisTemplate.trim()) {
-        return config.staticQrisTemplate.trim();
-      }
-    } catch {}
+  const config = getCachedConfig();
+  if (config.staticQrisTemplate && config.staticQrisTemplate.trim()) {
+    return config.staticQrisTemplate.trim();
   }
   if (process.env.STATIC_QRIS_TEMPLATE && process.env.STATIC_QRIS_TEMPLATE.trim()) {
     return process.env.STATIC_QRIS_TEMPLATE.trim();
@@ -84,6 +85,7 @@ payment.post('/template', async (c) => {
   }
   config.staticQrisTemplate = cleanTemplate;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+  invalidateConfigCache();
 
   return c.json({
     success: true,
@@ -124,10 +126,11 @@ payment.post('/decode-qr', async (c) => {
     tempFilePath = path.join(os.tmpdir(), `kaigobiz_qr_${Date.now()}_${randomSuffix}.png`);
     fs.writeFileSync(tempFilePath, buffer);
 
-    const qrString = execFileSync('python3', [pythonScript, tempFilePath], {
+    const { stdout } = await execFileAsync('python3', [pythonScript, tempFilePath], {
       encoding: 'utf-8',
       timeout: 20000,
-    }).trim();
+    });
+    const qrString = stdout.trim();
 
     if (!qrString || qrString === 'NO_QR_FOUND') {
       return c.json({ error: 'Tidak dapat mendeteksi kode QR dari gambar tersebut. Pastikan foto atau tangkapan layar jelas dan memuat kode QR.' }, 400);
@@ -189,6 +192,7 @@ payment.post('/webhook-config', async (c) => {
 
   config.webhookUrl = cleanWebhook;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+  invalidateConfigCache();
 
   return c.json({
     success: true,
@@ -285,13 +289,14 @@ payment.post('/create', async (c) => {
   }
 
   // Idempotency: Return existing active pending order if orderId and amount match
-  const allOrders = (await storage.getAllPaymentOrders?.()) || [];
-  const existingPending = allOrders.find(
-    (o) =>
-      o.orderId === cleanOrderId &&
-      o.status === 'PENDING' &&
-      new Date(o.expiresAt).getTime() > Date.now()
-  );
+  const existingPending = storage.getActivePendingOrder
+    ? await storage.getActivePendingOrder(cleanOrderId)
+    : ((await storage.getAllPaymentOrders?.()) || []).find(
+        (o) =>
+          o.orderId === cleanOrderId &&
+          o.status === 'PENDING' &&
+          new Date(o.expiresAt).getTime() > Date.now()
+      );
 
   const reqUrl = new URL(c.req.url);
 
@@ -320,20 +325,47 @@ payment.post('/create', async (c) => {
     const maxCode = Math.max(minCode, Math.min(9999, Number(uniqueCodeMax) || 250));
     const isSubtract = uniqueCodeType === 'SUBTRACT';
 
-    const pendingAmounts = new Set(
-      allOrders
-        .filter((o) => o.status === 'PENDING' && new Date(o.expiresAt).getTime() > Date.now())
-        .map((o) => o.amount)
-    );
+    const pendingAmounts = storage.getActivePendingAmounts
+      ? await storage.getActivePendingAmounts()
+      : new Set(
+          ((await storage.getAllPaymentOrders?.()) || [])
+            .filter((o) => o.status === 'PENDING' && new Date(o.expiresAt).getTime() > Date.now())
+            .map((o) => o.amount)
+        );
 
-    for (let attempt = 0; attempt < (maxCode - minCode + 1) * 2; attempt++) {
-      const candidateCode = Math.floor(minCode + Math.random() * (maxCode - minCode + 1));
+    const rangeSize = maxCode - minCode + 1;
+    let found = false;
+
+    // Random attempts first
+    for (let attempt = 0; attempt < Math.min(30, rangeSize * 2); attempt++) {
+      const candidateCode = Math.floor(minCode + Math.random() * rangeSize);
       const candidateAmount = isSubtract ? integerAmount - candidateCode : integerAmount + candidateCode;
       if (candidateAmount >= 1 && !pendingAmounts.has(candidateAmount)) {
         finalAmount = candidateAmount;
         uniqueCode = candidateCode;
+        found = true;
         break;
       }
+    }
+
+    // Sequential fallback
+    if (!found) {
+      for (let code = minCode; code <= maxCode; code++) {
+        const candidateAmount = isSubtract ? integerAmount - code : integerAmount + code;
+        if (candidateAmount >= 1 && !pendingAmounts.has(candidateAmount)) {
+          finalAmount = candidateAmount;
+          uniqueCode = code;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    if (!found) {
+      return c.json(
+        { error: 'Semua kode unik dalam rentang tersebut sedang aktif. Harap coba beberapa saat lagi.' },
+        409
+      );
     }
   }
 
@@ -415,8 +447,9 @@ payment.get('/status/:paymentId', async (c) => {
       await storage.savePaymentOrder(order);
     } else {
       const orderCreatedAt = new Date(order.createdAt).getTime();
-      const allOrders = (await storage.getAllPaymentOrders?.()) || [];
-      const usedTxIds = getUsedTransactionIds(allOrders);
+      const usedTxIds = storage.getUsedTransactionIds
+        ? await storage.getUsedTransactionIds()
+        : getUsedTransactionIds((await storage.getAllPaymentOrders?.()) || []);
 
       const txs = await storage.getTransactions();
       let matched = txs.find((tx) =>
@@ -440,17 +473,21 @@ payment.get('/status/:paymentId', async (c) => {
         order.paidAt = new Date().toISOString();
         order.transactionId = matched.id;
 
+        await storage.savePaymentOrder(order);
+
         const targetCallback = order.callbackUrl || getGlobalWebhookUrl();
         if (targetCallback && order.callbackStatus !== 'SUCCESS') {
           sendWebhookNotification(targetCallback, order, matched)
-            .then((ok) => {
-              order.callbackStatus = ok ? 'SUCCESS' : 'FAILED';
-              storage.savePaymentOrder(order).catch(() => {});
+            .then(async (ok) => {
+              const fresh = await storage.getPaymentOrder(order.paymentId);
+              if (fresh) {
+                fresh.callbackStatus = ok ? 'SUCCESS' : 'FAILED';
+                fresh.lastCallbackAttempt = new Date().toISOString();
+                await storage.savePaymentOrder(fresh);
+              }
             })
             .catch(() => {});
         }
-
-        await storage.savePaymentOrder(order);
       }
     }
   }

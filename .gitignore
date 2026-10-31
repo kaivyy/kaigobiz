@@ -13,6 +13,7 @@ build/
 !.env.example
 .kaigobiz-*.json
 .kaigobiz.db*
+.kaigobiz-test.db*
 .camoufox-profile/
 
 # Debug & Temporary Artifacts
@@ -22,6 +23,8 @@ build/
 *.log
 *.bin
 graphify-out/
+__pycache__/
+*.pyc
 
 # Local Scratch Scripts
 camoufox_gobiz_login.py

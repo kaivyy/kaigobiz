@@ -35,11 +35,10 @@ export class SessionManager {
     const session = await this.getSession();
     if (!session) return null;
 
-    // Token known to be permanently dead — skip network call entirely.
+    // Skip network call if token is known to be permanently dead.
     if (this.permanentlyInvalid) return null;
 
     if (this.isExpired(session)) {
-      // Transient failure cooldown: wait 60s before retrying network errors.
       if (Date.now() - this.lastFailedRefreshTime < 60 * 1000) {
         return null;
       }
@@ -49,14 +48,11 @@ export class SessionManager {
         await this.storage.saveSession(refreshed);
         return refreshed;
       } catch (err: any) {
-        // Permanent failure (401 token expired/revoked): mark as dead, never retry.
-        // This prevents hammering GoBiz API every 60s with a dead token.
         if (err.isPermanent) {
           this.permanentlyInvalid = true;
-          console.warn(`[KaiGoBiz SessionManager] Token permanently invalid — re-login required. (${err.message})`);
+          console.warn(`[KaiGoBiz SessionManager] Token permanently invalid - re-login required. (${err.message})`);
           return null;
         }
-        // Transient failure: retry after 60s cooldown.
         this.lastFailedRefreshTime = Date.now();
         console.warn(`[KaiGoBiz SessionManager] Transient refresh error, will retry in 60s: ${err.message}`);
         return null;

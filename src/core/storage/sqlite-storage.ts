@@ -38,6 +38,11 @@ export class SqliteStorageAdapter implements StorageAdapter {
     }
 
     this.db = new DatabaseSync(this.dbPath);
+    if (this.dbPath !== ':memory:') {
+      try {
+        fs.chmodSync(this.dbPath, 0o600);
+      } catch {}
+    }
     this.initPragmas(config);
     this.initSchema();
 
@@ -47,7 +52,8 @@ export class SqliteStorageAdapter implements StorageAdapter {
   }
 
   private initPragmas(config?: SqliteStorageConfig) {
-    const busyTimeout = config?.busyTimeout ?? 5000;
+    const rawTimeout = Number(config?.busyTimeout ?? 5000);
+    const busyTimeout = Number.isInteger(rawTimeout) && rawTimeout >= 0 ? rawTimeout : 5000;
     this.db.exec(`PRAGMA busy_timeout = ${busyTimeout};`);
 
     if (this.dbPath !== ':memory:' && config?.enableWal !== false) {
@@ -68,6 +74,12 @@ export class SqliteStorageAdapter implements StorageAdapter {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS app_config (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS payment_orders (
         payment_id TEXT PRIMARY KEY,
         order_id TEXT NOT NULL,
@@ -80,6 +92,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
         paid_at TEXT,
         transaction_id TEXT,
         callback_url TEXT,
+        return_url TEXT,
         callback_status TEXT,
         callback_retries INTEGER DEFAULT 0,
         last_callback_attempt TEXT,
@@ -95,9 +108,6 @@ export class SqliteStorageAdapter implements StorageAdapter {
 
       CREATE INDEX IF NOT EXISTS idx_orders_order_id_status
         ON payment_orders(order_id, status);
-
-      CREATE INDEX IF NOT EXISTS idx_orders_paid_tx
-        ON payment_orders(transaction_id) WHERE status = 'PAID' AND transaction_id IS NOT NULL;
 
       CREATE INDEX IF NOT EXISTS idx_orders_created_at
         ON payment_orders(created_at);
@@ -117,27 +127,80 @@ export class SqliteStorageAdapter implements StorageAdapter {
       CREATE INDEX IF NOT EXISTS idx_tx_amount
         ON transactions(amount);
     `);
+
+    try {
+      this.db.exec('ALTER TABLE payment_orders ADD COLUMN return_url TEXT;');
+    } catch {}
+
+    try {
+      this.db.exec(`
+        DROP INDEX IF EXISTS idx_orders_paid_tx;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_paid_tx_unique
+          ON payment_orders(transaction_id) WHERE status = 'PAID' AND transaction_id IS NOT NULL;
+      `);
+    } catch {}
+
+    try {
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_order_id_unique
+          ON payment_orders(order_id) WHERE status = 'PENDING';
+      `);
+    } catch {}
   }
 
   private migrateJsonFiles(baseDir: string) {
     try {
-      // 1. Migrate session if empty
-      const sessionFile = path.join(baseDir, '.kaigobiz-session.json');
-      if (fs.existsSync(sessionFile)) {
-        const count = this.db.prepare('SELECT COUNT(*) as count FROM session').get() as { count: number };
-        if (count.count === 0) {
-          const raw = fs.readFileSync(sessionFile, 'utf-8');
-          const data = JSON.parse(raw);
-          if (data && data.access_token) {
-            this.db.prepare('INSERT OR REPLACE INTO session (id, data, updated_at) VALUES (1, ?, ?)').run(
-              raw,
-              data.updated_at || new Date().toISOString()
-            );
+      const nowIso = new Date().toISOString();
+
+      // Migrate session at most once so logout cannot resurrect stale .kaigobiz-session.json
+      const sessionMigRow = this.db
+        .prepare("SELECT value FROM app_config WHERE key = 'json_session_migrated'")
+        .get() as { value: string } | undefined;
+      if (!sessionMigRow) {
+        const sessionFile = path.join(baseDir, '.kaigobiz-session.json');
+        if (fs.existsSync(sessionFile)) {
+          const count = this.db.prepare('SELECT COUNT(*) as count FROM session').get() as { count: number };
+          if (count.count === 0) {
+            const raw = fs.readFileSync(sessionFile, 'utf-8');
+            const data = JSON.parse(raw);
+            if (data && data.access_token) {
+              this.db.prepare('INSERT OR REPLACE INTO session (id, data, updated_at) VALUES (1, ?, ?)').run(
+                raw,
+                data.updated_at || nowIso
+              );
+            }
           }
         }
+        this.db
+          .prepare("INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('json_session_migrated', '1', ?)")
+          .run(nowIso);
       }
 
-      // 2. Migrate orders if empty
+      // Migrate .kaigobiz-config.json once into SQLite app_config
+      const configMigRow = this.db
+        .prepare("SELECT value FROM app_config WHERE key = 'json_config_migrated'")
+        .get() as { value: string } | undefined;
+      if (!configMigRow) {
+        const configFile = path.join(baseDir, '.kaigobiz-config.json');
+        if (fs.existsSync(configFile)) {
+          try {
+            const cfg = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
+            if (cfg && typeof cfg === 'object') {
+              const stmt = this.db.prepare('INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES (?, ?, ?)');
+              for (const k of ['staticQrisTemplate', 'webhookUrl', 'webhookSecret']) {
+                if (cfg[k] !== undefined && cfg[k] !== null && String(cfg[k]).trim()) {
+                  stmt.run(k, String(cfg[k]).trim(), nowIso);
+                }
+              }
+            }
+          } catch {}
+        }
+        this.db
+          .prepare("INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('json_config_migrated', '1', ?)")
+          .run(nowIso);
+      }
+
+      // Migrate orders if empty
       const ordersFile = path.join(baseDir, '.kaigobiz-orders.json');
       if (fs.existsSync(ordersFile)) {
         const count = this.db.prepare('SELECT COUNT(*) as count FROM payment_orders').get() as { count: number };
@@ -156,7 +219,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
         }
       }
 
-      // 3. Migrate transactions if empty
+      // Migrate transactions if empty
       const txFile = path.join(baseDir, '.kaigobiz-tx.json');
       if (fs.existsSync(txFile)) {
         const count = this.db.prepare('SELECT COUNT(*) as count FROM transactions').get() as { count: number };
@@ -203,6 +266,9 @@ export class SqliteStorageAdapter implements StorageAdapter {
   async clearSession(): Promise<boolean> {
     try {
       this.db.prepare('DELETE FROM session WHERE id = 1').run();
+      this.db
+        .prepare("INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('json_session_migrated', '1', ?)")
+        .run(new Date().toISOString());
       return true;
     } catch {
       return false;
@@ -280,6 +346,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       paidAt: r.paid_at || undefined,
       transactionId: r.transaction_id || undefined,
       callbackUrl: r.callback_url || undefined,
+      returnUrl: r.return_url || undefined,
       callbackStatus: r.callback_status || undefined,
       callbackRetries: r.callback_retries !== null && r.callback_retries !== undefined ? Number(r.callback_retries) : 0,
       lastCallbackAttempt: r.last_callback_attempt || undefined,
@@ -292,9 +359,9 @@ export class SqliteStorageAdapter implements StorageAdapter {
     this.db.prepare(`
       INSERT INTO payment_orders (
         payment_id, order_id, amount, raw_amount, unique_code, status,
-        created_at, expires_at, paid_at, transaction_id, callback_url,
+        created_at, expires_at, paid_at, transaction_id, callback_url, return_url,
         callback_status, callback_retries, last_callback_attempt, qris_string, qris_qr_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(payment_id) DO UPDATE SET
         order_id = excluded.order_id,
         amount = excluded.amount,
@@ -306,6 +373,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
         paid_at = excluded.paid_at,
         transaction_id = excluded.transaction_id,
         callback_url = excluded.callback_url,
+        return_url = excluded.return_url,
         callback_status = excluded.callback_status,
         callback_retries = excluded.callback_retries,
         last_callback_attempt = excluded.last_callback_attempt,
@@ -323,6 +391,7 @@ export class SqliteStorageAdapter implements StorageAdapter {
       order.paidAt ?? null,
       order.transactionId ?? null,
       order.callbackUrl ?? null,
+      order.returnUrl ?? null,
       order.callbackStatus ?? null,
       order.callbackRetries ?? 0,
       order.lastCallbackAttempt ?? null,
@@ -442,6 +511,108 @@ export class SqliteStorageAdapter implements StorageAdapter {
         );
     } catch {
       return [];
+    }
+  }
+
+  async markOrderPaidIfPending(paymentId: string, transactionId: string, paidAt: string): Promise<boolean> {
+    try {
+      const res = this.db
+        .prepare(
+          "UPDATE payment_orders SET status = 'PAID', paid_at = ?, transaction_id = ?, callback_retries = 0, last_callback_attempt = ? WHERE payment_id = ? AND status = 'PENDING'"
+        )
+        .run(paidAt, transactionId, paidAt, paymentId);
+      return Number(res?.changes || 0) === 1;
+    } catch {
+      return false;
+    }
+  }
+
+  async updateOrderCallbackStatus(
+    paymentId: string,
+    status: 'SUCCESS' | 'FAILED',
+    lastAttempt: string,
+    incrementRetries: boolean = false
+  ): Promise<boolean> {
+    try {
+      // Guard prevents async failure from overwriting an already succeeded callback
+      const sql = incrementRetries
+        ? "UPDATE payment_orders SET callback_status = ?, last_callback_attempt = ?, callback_retries = COALESCE(callback_retries, 0) + 1 WHERE payment_id = ? AND (callback_status IS NULL OR callback_status != 'SUCCESS')"
+        : "UPDATE payment_orders SET callback_status = ?, last_callback_attempt = ? WHERE payment_id = ? AND (callback_status IS NULL OR callback_status != 'SUCCESS')";
+      const res = this.db.prepare(sql).run(status, lastAttempt, paymentId);
+      return Number(res?.changes || 0) >= 1;
+    } catch {
+      return false;
+    }
+  }
+
+  async expireStalePendingOrders(nowIso?: string): Promise<number> {
+    try {
+      const cutoff = nowIso || new Date().toISOString();
+      const res = this.db
+        .prepare("UPDATE payment_orders SET status = 'EXPIRED' WHERE status = 'PENDING' AND expires_at <= ?")
+        .run(cutoff);
+      return Number(res?.changes || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  async getRecentTransactions(sinceIso: string, limit: number = 500): Promise<TransactionData[]> {
+    try {
+      const safeLimit = Math.max(1, Math.min(5000, Math.floor(limit)));
+      const rows = this.db
+        .prepare(
+          'SELECT id, amount, description, timestamp, status, raw FROM transactions WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?'
+        )
+        .all(sinceIso, safeLimit) as any[];
+      return rows.map((r) => ({
+        id: r.id,
+        amount: Number(r.amount),
+        description: r.description || undefined,
+        timestamp: r.timestamp,
+        status: r.status,
+        raw: r.raw ? JSON.parse(r.raw) : undefined,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  async getConfig(): Promise<Record<string, any>> {
+    try {
+      const rows = this.db
+        .prepare('SELECT key, value FROM app_config')
+        .all() as Array<{ key: string; value: string | null }>;
+      const cfg: Record<string, any> = {};
+      for (const r of rows) {
+        if (r.value !== null && r.value !== undefined) {
+          cfg[r.key] = r.value;
+        }
+      }
+      return cfg;
+    } catch {
+      return {};
+    }
+  }
+
+  async setConfig(patch: Record<string, any>): Promise<boolean> {
+    try {
+      const nowIso = new Date().toISOString();
+      this.db.exec('BEGIN IMMEDIATE;');
+      const upsertStmt = this.db.prepare('INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES (?, ?, ?)');
+      const delStmt = this.db.prepare('DELETE FROM app_config WHERE key = ?');
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === undefined || String(v).trim() === '') {
+          delStmt.run(k);
+        } else {
+          upsertStmt.run(k, String(v).trim(), nowIso);
+        }
+      }
+      this.db.exec('COMMIT;');
+      return true;
+    } catch {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return false;
     }
   }
 

@@ -21,9 +21,10 @@ export interface QRISDetails {
  * Returns a 4-character uppercase hexadecimal string.
  */
 export function calculateCRC16(payload: string): string {
+  const bytes = Buffer.from(payload, 'utf-8');
   let crc = 0xffff;
-  for (let i = 0; i < payload.length; i++) {
-    crc ^= payload.charCodeAt(i) << 8;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i] << 8;
     for (let j = 0; j < 8; j++) {
       if ((crc & 0x8000) !== 0) {
         crc = ((crc << 1) ^ 0x1021) & 0xffff;
@@ -66,8 +67,23 @@ export function inspectQRIS(qrisString: string): QRISDetails {
   }
 
   const clean = qrisString.trim();
+  if (clean.length < 20 || clean.length > 1024 || /[<>]/.test(clean) || /[\x00-\x1f\x7f]/.test(clean)) {
+    return { isValid: false, isDynamic: false };
+  }
+
   const items = parseTLV(clean);
   if (items.length < 5) {
+    return { isValid: false, isDynamic: false };
+  }
+
+  const tag00 = items.find((i) => i.tag === '00');
+  const tag63 = items.find((i) => i.tag === '63');
+  if (tag00?.value !== '01' || !tag63 || tag63.value.length !== 4 || !clean.endsWith(tag63.value)) {
+    return { isValid: false, isDynamic: false };
+  }
+
+  const expectedCrc = calculateCRC16(clean.slice(0, -4));
+  if (expectedCrc !== tag63.value.toUpperCase()) {
     return { isValid: false, isDynamic: false };
   }
 

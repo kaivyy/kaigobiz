@@ -11,6 +11,12 @@ export interface SessionData {
   cookie?: string | null;
   updated_at?: string;
   expires_at?: string | null;
+  device_id?: string | null;
+  user_agent?: string | null;
+  phone_make?: string | null;
+  phone_model?: string | null;
+  app_version?: string | null;
+  token_ttl_seconds?: number | null;
 }
 
 export interface TransactionData {
@@ -34,6 +40,7 @@ export interface PaymentOrder {
   createdAt: string;
   expiresAt: string;
   callbackUrl?: string;
+  returnUrl?: string;
   paidAt?: string;
   callbackStatus?: 'SUCCESS' | 'FAILED' | 'SKIPPED';
   callbackRetries?: number;
@@ -48,6 +55,7 @@ export interface StorageAdapter {
   saveTransaction(tx: TransactionData): Promise<boolean>;
   saveTransactions?(txs: TransactionData[]): Promise<boolean>;
   getTransactions(): Promise<TransactionData[]>;
+  getRecentTransactions?(sinceIso: string, limit?: number): Promise<TransactionData[]>;
   savePaymentOrder(order: PaymentOrder): Promise<boolean>;
   getPaymentOrder(paymentId: string): Promise<PaymentOrder | null>;
   getAllPaymentOrders?(): Promise<PaymentOrder[]>;
@@ -56,6 +64,16 @@ export interface StorageAdapter {
   getUsedTransactionIds?(): Promise<Set<string>>;
   getPendingOrders?(): Promise<PaymentOrder[]>;
   getFailedCallbackOrders?(maxRetries: number, retryCooldownMs: number): Promise<PaymentOrder[]>;
+  markOrderPaidIfPending?(paymentId: string, transactionId: string, paidAt: string): Promise<boolean>;
+  updateOrderCallbackStatus?(
+    paymentId: string,
+    status: 'SUCCESS' | 'FAILED',
+    lastAttempt: string,
+    incrementRetries?: boolean
+  ): Promise<boolean>;
+  expireStalePendingOrders?(nowIso?: string): Promise<number>;
+  getConfig?(): Promise<Record<string, any>>;
+  setConfig?(patch: Record<string, any>): Promise<boolean>;
   backup?(targetPath: string): Promise<boolean>;
   close?(): void;
 }

@@ -5,6 +5,7 @@ export interface CheckoutOptions {
   orderId: string;
   amount: number;
   callbackUrl?: string;
+  returnUrl?: string;
   expiryMinutes?: number;
   useUniqueCode?: boolean;
   uniqueCodeMin?: number;
@@ -27,6 +28,7 @@ export class KaiGoBiz {
           orderId: options.orderId,
           amount: options.amount,
           callbackUrl: options.callbackUrl,
+          returnUrl: options.returnUrl,
           expiryMinutes: options.expiryMinutes,
           useUniqueCode: options.useUniqueCode,
           uniqueCodeMin: options.uniqueCodeMin,
@@ -41,6 +43,7 @@ export class KaiGoBiz {
         return;
       }
 
+      if (options.onPending) options.onPending(data);
       KaiGoBiz.showModal(data, options, baseEndpoint);
     } catch (err) {
       if (options.onError) options.onError(err);
@@ -50,6 +53,7 @@ export class KaiGoBiz {
   private static showModal(paymentData: any, options: CheckoutOptions, endpoint: string) {
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     let timerInterval: ReturnType<typeof setInterval> | null = null;
+    let isPolling = false;
 
     const overlay = document.createElement('div');
     overlay.className = 'kaigobiz-modal-overlay';
@@ -65,7 +69,7 @@ export class KaiGoBiz {
         </div>
         <div class="kaigobiz-amount">Rp ${Number(paymentData.amount).toLocaleString('id-ID')}</div>
         <div class="kaigobiz-qr-box">
-          <img src="${paymentData.qrisQrUrl}" alt="Kode QRIS Pembayaran" width="200" height="200" style="display:block;" />
+          <img id="kaigobiz-qr-img" alt="Kode QRIS Pembayaran" width="200" height="200" style="display:block;" />
         </div>
         <p class="kaigobiz-instructions">Pindai kode QRIS di atas dengan aplikasi perbankan atau dompet digital Anda.</p>
         <div class="kaigobiz-timer-box">
@@ -76,10 +80,15 @@ export class KaiGoBiz {
       </div>
     `;
 
-    // Safely assign text content to prevent XSS
     const orderIdEl = overlay.querySelector('#kaigobiz-order-id');
     if (orderIdEl) {
       orderIdEl.textContent = `Order: ${paymentData.orderId}`;
+    }
+
+    const qrImgEl = overlay.querySelector('#kaigobiz-qr-img') as HTMLImageElement | null;
+    const rawQrUrl = String(paymentData.qrisQrUrl || '');
+    if (qrImgEl && /^data:image\/(png|jpeg|webp);base64,/i.test(rawQrUrl)) {
+      qrImgEl.src = rawQrUrl;
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -119,9 +128,12 @@ export class KaiGoBiz {
       }
     }, 1000);
 
+    const encodedId = encodeURIComponent(String(paymentData.paymentId || ''));
     pollInterval = setInterval(async () => {
+      if (isPolling) return;
+      isPolling = true;
       try {
-        const statusRes = await fetch(`${endpoint}/api/v1/payment/status/${paymentData.paymentId}`);
+        const statusRes = await fetch(`${endpoint}/api/v1/payment/status/${encodedId}`);
         const statusData = await statusRes.json();
         if (statusData.status === 'PAID') {
           closeModal();
@@ -132,12 +144,13 @@ export class KaiGoBiz {
         }
       } catch {
         // Network polling error; retry next interval
+      } finally {
+        isPolling = false;
       }
     }, 3000);
   }
 }
 
-// Global window attachment for UMD/Script tag
 if (typeof window !== 'undefined') {
   (window as any).KaiGoBiz = KaiGoBiz;
 }

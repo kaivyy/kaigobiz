@@ -12,6 +12,14 @@ interface TransactionItem {
 interface AuthStatusResponse {
   connected: boolean;
   needs_relogin?: boolean;
+  health?: {
+    needs_relogin?: boolean;
+    rate_limited_until?: number | null;
+    backoff_until?: number | null;
+    consecutive_failures?: number;
+    last_error?: string | null;
+    expires_in_seconds?: number | null;
+  };
   session?: {
     outlet_name?: string;
     owner_name?: string;
@@ -45,6 +53,209 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+let apiKeyModalInFlight: Promise<string | null> | null = null;
+
+function syncApiKeyButtonState() {
+  const btn = document.getElementById('api-key-config-btn');
+  const label = document.getElementById('api-key-btn-label');
+  const hasKey = Boolean(sessionStorage.getItem('kaigobiz_api_key')?.trim());
+  if (btn) {
+    btn.classList.toggle('configured', hasKey);
+  }
+  if (label) {
+    label.textContent = hasKey ? 'API Key: Aktif' : 'API Key';
+  }
+}
+
+async function openApiKeyModal(options?: {
+  reason?: string;
+  statusText?: string;
+  statusType?: 'info' | 'error' | 'success';
+  verifyOnSave?: boolean;
+}): Promise<string | null> {
+  if (apiKeyModalInFlight) return await apiKeyModalInFlight;
+
+  const modal = document.getElementById('api-key-modal');
+  const form = document.getElementById('api-key-modal-form') as HTMLFormElement | null;
+  const input = document.getElementById('api-key-modal-input') as HTMLInputElement | null;
+  const subtitle = document.getElementById('api-key-modal-subtitle');
+  const statusEl = document.getElementById('api-key-modal-status');
+  const toggleVisBtn = document.getElementById('api-key-toggle-vis') as HTMLButtonElement | null;
+  const clearBtn = document.getElementById('api-key-clear-btn') as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById('api-key-cancel-btn') as HTMLButtonElement | null;
+  const closeBtn = document.getElementById('api-key-modal-close') as HTMLButtonElement | null;
+  const saveBtn = document.getElementById('api-key-save-btn') as HTMLButtonElement | null;
+
+  if (!modal || !form || !input) return null;
+
+  const prevFocused = document.activeElement as HTMLElement | null;
+
+  const setInlineStatus = (text: string | null, type: 'info' | 'error' | 'success' = 'info') => {
+    if (!statusEl) return;
+    if (!text) {
+      statusEl.hidden = true;
+      statusEl.textContent = '';
+      statusEl.className = 'modal-inline-status';
+      return;
+    }
+    statusEl.hidden = false;
+    statusEl.textContent = text;
+    statusEl.className = `modal-inline-status ${type}`;
+  };
+
+  if (subtitle) {
+    subtitle.textContent =
+      options?.reason || 'Masukkan KAIGOBIZ_API_KEY untuk mengakses endpoint admin dan mutasi.';
+  }
+  input.value = sessionStorage.getItem('kaigobiz_api_key') || '';
+  input.type = 'password';
+  if (toggleVisBtn) toggleVisBtn.textContent = 'Lihat';
+  if (clearBtn) clearBtn.style.display = input.value ? 'inline-flex' : 'none';
+  setInlineStatus(options?.statusText || null, options?.statusType || 'info');
+
+  modal.hidden = false;
+  modal.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => input.focus());
+
+  apiKeyModalInFlight = new Promise<string | null>((resolve) => {
+    let settled = false;
+
+    const closeModal = (result: string | null) => {
+      if (settled) return;
+      settled = true;
+      modal.hidden = true;
+      modal.setAttribute('aria-hidden', 'true');
+      if (saveBtn) saveBtn.disabled = false;
+      form.removeEventListener('submit', onSubmit);
+      clearBtn?.removeEventListener('click', onClear);
+      cancelBtn?.removeEventListener('click', onCancel);
+      closeBtn?.removeEventListener('click', onCancel);
+      toggleVisBtn?.removeEventListener('click', onToggleVis);
+      modal.removeEventListener('click', onBackdropClick);
+      document.removeEventListener('keydown', onKeyDown);
+      apiKeyModalInFlight = null;
+      prevFocused?.focus?.();
+      resolve(result);
+    };
+
+    const onCancel = () => closeModal(null);
+
+    const onBackdropClick = (e: MouseEvent) => {
+      if (e.target === modal) closeModal(null);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeModal(null);
+      }
+    };
+
+    const onToggleVis = () => {
+      const nextHidden = input.type !== 'password';
+      input.type = nextHidden ? 'password' : 'text';
+      if (toggleVisBtn) toggleVisBtn.textContent = nextHidden ? 'Lihat' : 'Sembunyikan';
+      input.focus();
+    };
+
+    const onClear = async () => {
+      sessionStorage.removeItem('kaigobiz_api_key');
+      syncApiKeyButtonState();
+      input.value = '';
+      if (clearBtn) clearBtn.style.display = 'none';
+      setInlineStatus('API key dihapus dari sesi browser ini.', 'info');
+      await checkStatus();
+      await fetchTransactions();
+    };
+
+    const onSubmit = async (e: Event) => {
+      e.preventDefault();
+      const trimmed = input.value.trim();
+      if (!trimmed) {
+        setInlineStatus('Masukkan KAIGOBIZ_API_KEY terlebih dahulu, atau klik Hapus Kunci.', 'error');
+        input.focus();
+        return;
+      }
+
+      if (options?.verifyOnSave) {
+        if (saveBtn) saveBtn.disabled = true;
+        setInlineStatus('Memeriksa kecocokan API key dengan server...', 'info');
+        try {
+          const checkRes = await fetch('/api/v1/auth/status', {
+            headers: { 'X-API-Key': trimmed },
+          });
+          if (checkRes.status === 401) {
+            if (saveBtn) saveBtn.disabled = false;
+            setInlineStatus('API key ditolak server. Periksa nilai KAIGOBIZ_API_KEY di file .env.', 'error');
+            input.focus();
+            return;
+          }
+          sessionStorage.setItem('kaigobiz_api_key', trimmed);
+          syncApiKeyButtonState();
+          setInlineStatus('API key valid dan tersimpan di sesi browser ini.', 'success');
+          await checkStatus();
+          await fetchTransactions();
+          setTimeout(() => closeModal(trimmed), 600);
+        } catch {
+          if (saveBtn) saveBtn.disabled = false;
+          setInlineStatus('Gagal menghubungi server untuk memverifikasi API key.', 'error');
+        }
+        return;
+      }
+
+      sessionStorage.setItem('kaigobiz_api_key', trimmed);
+      syncApiKeyButtonState();
+      closeModal(trimmed);
+    };
+
+    form.addEventListener('submit', onSubmit);
+    clearBtn?.addEventListener('click', onClear);
+    cancelBtn?.addEventListener('click', onCancel);
+    closeBtn?.addEventListener('click', onCancel);
+    toggleVisBtn?.addEventListener('click', onToggleVis);
+    modal.addEventListener('click', onBackdropClick);
+    document.addEventListener('keydown', onKeyDown);
+  });
+
+  return await apiKeyModalInFlight;
+}
+
+async function promptForApiKey(): Promise<string | null> {
+  return await openApiKeyModal({
+    reason: 'Server membutuhkan KAIGOBIZ_API_KEY untuk mengakses endpoint admin dan mutasi.',
+    statusText: sessionStorage.getItem('kaigobiz_api_key')
+      ? 'API key sebelumnya ditolak server. Masukkan kunci terbaru dari file .env.'
+      : undefined,
+    statusType: 'error',
+    verifyOnSave: false,
+  });
+}
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const buildHeaders = () => {
+    const headers = new Headers(init.headers || {});
+    const storedKey = sessionStorage.getItem('kaigobiz_api_key');
+    if (storedKey) {
+      headers.set('X-API-Key', storedKey);
+    }
+    return headers;
+  };
+
+  let res = await fetch(input, { ...init, headers: buildHeaders() });
+  if (res.status === 401) {
+    try {
+      const errBody = await res.clone().json();
+      if (errBody?.code === 'API_KEY_REQUIRED') {
+        const entered = await promptForApiKey();
+        if (entered) {
+          res = await fetch(input, { ...init, headers: buildHeaders() });
+        }
+      }
+    } catch {}
+  }
+  return res;
 }
 
 /* ==========================================================================
@@ -127,7 +338,7 @@ async function checkStatus() {
 
   try {
     const startTime = performance.now();
-    const res = await fetch('/api/v1/auth/status');
+    const res = await apiFetch('/api/v1/auth/status');
     const latency = Math.round(performance.now() - startTime);
 
     const latencyEl = document.getElementById('stat-gateway-latency');
@@ -195,6 +406,13 @@ async function checkStatus() {
           </div>
 
           <div class="session-actions-row">
+            <button type="button" class="btn outline small" id="btn-refresh-session-token">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+              </svg>
+              <span>Perbarui Token</span>
+            </button>
+
             <button type="button" class="btn outline small" id="btn-refresh-session-profile">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
@@ -214,14 +432,39 @@ async function checkStatus() {
               <span>Putuskan Sesi</span>
             </button>
           </div>
+          ${
+            data.health?.rate_limited_until && data.health.rate_limited_until > Date.now()
+              ? `<p style="margin-top: 10px; font-size: 12px; color: var(--warning, #fbbf24);">Jeda anti-ban GoBiz aktif sementara hingga ${escapeHtml(new Date(data.health.rate_limited_until).toLocaleTimeString('id-ID'))} untuk melindungi akun.</p>`
+              : ''
+          }
         `;
+
+        const btnRefreshToken = document.getElementById('btn-refresh-session-token');
+        btnRefreshToken?.addEventListener('click', async () => {
+          btnRefreshToken.setAttribute('disabled', 'true');
+          btnRefreshToken.textContent = 'Memperbarui...';
+          try {
+            const r = await apiFetch('/api/v1/auth/refresh', { method: 'POST' });
+            const d = await r.json();
+            if (r.ok && d.success) {
+              showToast('Token sesi GoBiz berhasil diperbarui tanpa OTP', 'success');
+              await checkStatus();
+            } else {
+              showToast(d.error || 'Gagal memperbarui token sesi', 'error');
+            }
+          } catch {
+            showToast('Gangguan jaringan saat memperbarui token', 'error');
+          } finally {
+            btnRefreshToken?.removeAttribute('disabled');
+          }
+        });
 
         const btnRefreshProfile = document.getElementById('btn-refresh-session-profile');
         btnRefreshProfile?.addEventListener('click', async () => {
           btnRefreshProfile.setAttribute('disabled', 'true');
           btnRefreshProfile.textContent = 'Menyinkronkan...';
           try {
-            const r = await fetch('/api/v1/auth/refresh-profile', { method: 'POST' });
+            const r = await apiFetch('/api/v1/auth/refresh-profile', { method: 'POST' });
             const d = await r.json();
             if (r.ok && d.success) {
               showToast('Data merchant GoBiz berhasil diperbarui', 'success');
@@ -240,7 +483,7 @@ async function checkStatus() {
         btnLogout?.addEventListener('click', async () => {
           if (!confirm('Apakah Anda yakin ingin memutuskan sesi GoBiz ini?')) return;
           try {
-            const r = await fetch('/api/v1/auth/logout', { method: 'POST' });
+            const r = await apiFetch('/api/v1/auth/logout', { method: 'POST' });
             if (r.ok) {
               showToast('Sesi GoBiz berhasil diputuskan', 'info');
               await checkStatus();
@@ -276,10 +519,34 @@ async function checkStatus() {
             </div>
             <div class="empty-state" style="padding: 8px 12px;">
               <p style="color: var(--text-muted); font-size: 13px;">
-                Masukkan nomor handphone GoBiz Anda untuk menghubungkan ulang akun.
+                Masukkan nomor handphone GoBiz Anda untuk menghubungkan ulang akun, atau coba pulihkan sesi dari profil browser terlebih dahulu.
               </p>
+              <button type="button" class="btn outline small" id="btn-recover-session-token" style="margin-top: 8px;">
+                <span>Coba Pulihkan Tanpa OTP</span>
+              </button>
             </div>
           `;
+
+          const btnRecoverToken = document.getElementById('btn-recover-session-token');
+          btnRecoverToken?.addEventListener('click', async () => {
+            btnRecoverToken.setAttribute('disabled', 'true');
+            btnRecoverToken.textContent = 'Memulihkan sesi...';
+            try {
+              const r = await apiFetch('/api/v1/auth/refresh', { method: 'POST' });
+              const d = await r.json();
+              if (r.ok && d.success) {
+                showToast('Sesi GoBiz berhasil dipulihkan tanpa OTP', 'success');
+                await checkStatus();
+                await fetchTransactions();
+              } else {
+                showToast(d.error || 'Sesi tidak dapat dipulihkan otomatis, silakan login via OTP', 'error');
+              }
+            } catch {
+              showToast('Gangguan jaringan saat memulihkan sesi', 'error');
+            } finally {
+              btnRecoverToken?.removeAttribute('disabled');
+            }
+          });
         } else {
           sessionInfoContainer.innerHTML = `
             <div class="empty-state" style="padding: 24px 12px;">
@@ -416,17 +683,20 @@ function renderTransactions() {
 
   const rowsHtml = filtered
     .map((tx) => {
-      const statusClass = (tx.status || 'PENDING').toLowerCase();
+      const safeStatus = String(tx.status || 'PENDING').toUpperCase();
+      const statusClass = ['completed', 'pending', 'failed'].includes(safeStatus.toLowerCase())
+        ? safeStatus.toLowerCase()
+        : 'pending';
       const formattedAmount = `Rp ${Number(tx.amount).toLocaleString('id-ID')}`;
       const dateStr = tx.timestamp ? new Date(tx.timestamp).toLocaleString('id-ID') : '-';
 
       return `
         <tr>
-          <td><span class="tx-id">${tx.id}</span></td>
-          <td><span class="tx-amount">${formattedAmount}</span></td>
-          <td>${tx.description || 'GoPay QRIS Payment'}</td>
-          <td style="color: var(--text-dim);">${dateStr}</td>
-          <td><span class="tx-status-badge ${statusClass}">${tx.status}</span></td>
+          <td><span class="tx-id">${escapeHtml(tx.id)}</span></td>
+          <td><span class="tx-amount">${escapeHtml(formattedAmount)}</span></td>
+          <td>${escapeHtml(tx.description || 'GoPay QRIS Payment')}</td>
+          <td style="color: var(--text-dim);">${escapeHtml(dateStr)}</td>
+          <td><span class="tx-status-badge ${statusClass}">${escapeHtml(safeStatus)}</span></td>
         </tr>
       `;
     })
@@ -459,7 +729,7 @@ async function fetchTransactions() {
   if (refreshIcon) refreshIcon.classList.add('spin');
 
   try {
-    const res = await fetch('/api/v1/transactions');
+    const res = await apiFetch('/api/v1/transactions');
     const data = await res.json();
     allTransactions = (data.transactions || []).filter((tx: TransactionItem) => !tx.id.startsWith('tx_reconcile'));
     updateMetrics();
@@ -554,7 +824,7 @@ function initQrisStudio() {
 
   async function loadTemplateInfo() {
     try {
-      const res = await fetch('/api/v1/payment/template');
+      const res = await apiFetch('/api/v1/payment/template');
       const data = await res.json();
       if (!res.ok || !data.success) return;
 
@@ -738,15 +1008,16 @@ function initQrisStudio() {
       reader.onload = async () => {
         const imageBase64 = reader.result as string;
         try {
-          const res = await fetch('/api/v1/payment/decode-qr', {
+          const res = await apiFetch('/api/v1/payment/decode-qr', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ imageBase64 }),
           });
           const result = await res.json();
-          if (res.ok && result.success && result.qrisString) {
+          const decodedQr = result.qrString || result.qrisString;
+          if (res.ok && result.success && decodedQr) {
             if (templateStringInput) {
-              templateStringInput.value = result.qrisString;
+              templateStringInput.value = decodedQr;
             }
             if (templateCollapsible) {
               templateCollapsible.style.display = 'block';
@@ -837,7 +1108,7 @@ function initQrisStudio() {
     btnSaveTemplate.textContent = 'Menyimpan...';
 
     try {
-      const res = await fetch('/api/v1/payment/template', {
+      const res = await apiFetch('/api/v1/payment/template', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ template: templateVal }),
@@ -969,16 +1240,21 @@ function initQrisStudio() {
   }
 
   function startStatusPolling(paymentId: string) {
+    let pollInFlight = false;
     activePollInterval = setInterval(async () => {
+      if (pollInFlight) return;
+      pollInFlight = true;
       try {
-        const res = await fetch(`/api/v1/payment/status/${encodeURIComponent(paymentId)}`);
+        const res = await apiFetch(`/api/v1/payment/status/${encodeURIComponent(paymentId)}`);
         const data = await res.json();
         if (data.status === 'PAID') {
           handlePaymentPaid(data);
         } else if (data.status === 'EXPIRED') {
           handlePaymentExpired();
         }
-      } catch {}
+      } catch {} finally {
+        pollInFlight = false;
+      }
     }, 2500);
   }
 
@@ -1069,7 +1345,7 @@ function initQrisStudio() {
       }
 
       // Verify status with server
-      const res = await fetch(`/api/v1/payment/status/${encodeURIComponent(saved.paymentId)}`);
+      const res = await apiFetch(`/api/v1/payment/status/${encodeURIComponent(saved.paymentId)}`);
       const data = await res.json();
 
       if (data.status === 'PAID') {
@@ -1118,7 +1394,7 @@ function initQrisStudio() {
     }
 
     try {
-      const res = await fetch('/api/v1/payment/create', {
+      const res = await apiFetch('/api/v1/payment/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1269,7 +1545,7 @@ function initSessionTab() {
     }
 
     try {
-      const res = await fetch('/api/v1/auth/request-otp', {
+      const res = await apiFetch('/api/v1/auth/request-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
@@ -1277,7 +1553,14 @@ function initSessionTab() {
 
       const data = await res.json();
 
-      if (res.ok && data.success && data.otpToken) {
+      if (res.ok && data.success && data.alreadyAuthenticated) {
+        showToast(data.message || 'Sesi GoBiz dipulihkan tanpa OTP', 'success');
+        showOtpMessage(data.message || 'Sesi GoBiz berhasil dipulihkan dari profil browser tanpa perlu OTP.', 'success');
+        if (otpVerifyForm) otpVerifyForm.style.display = 'none';
+        if (otpInput) otpInput.value = '';
+        await checkStatus();
+        await fetchTransactions();
+      } else if (res.ok && data.success && data.otpToken) {
         currentOtpToken = data.otpToken;
         currentPhone = phone;
         const channelText = data.channel ? ` melalui ${data.channel}` : '';
@@ -1319,7 +1602,7 @@ function initSessionTab() {
     }
 
     try {
-      const res = await fetch('/api/v1/auth/verify-otp', {
+      const res = await apiFetch('/api/v1/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1396,6 +1679,12 @@ function initHeaderControls() {
     } else {
       showToast('Gagal menyalin tag script. Silakan salin manual: ' + scriptTag, 'error');
     }
+  });
+
+  syncApiKeyButtonState();
+  const apiKeyBtn = document.getElementById('api-key-config-btn');
+  apiKeyBtn?.addEventListener('click', async () => {
+    await openApiKeyModal({ verifyOnSave: true });
   });
 }
 

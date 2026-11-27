@@ -17,14 +17,16 @@ Pemisahan tugas antara KaiGoBiz dan E-Commerce mengikuti standar industri paymen
 
 ## 2. Persiapan & Konfigurasi Awal di KaiGoBiz
 
-Cukup disetel 1 kali melalui Dashboard Admin KaiGoBiz (`http://localhost:3636`):
+Cukup disetel 1 kali melalui Dashboard Admin KaiGoBiz (`http://localhost:3636`) dan file `.env`:
 
 1. **Template QRIS Statis Toko:**
    Masukkan string payload QRIS statis asli dari GoBiz Anda (diawali `000201...`) atau unggah gambar/PDF QRIS toko.
 2. **Koneksi Akun GoBiz:**
-   Masukkan nomor handphone GoBiz Anda dan verifikasi kode OTP yang masuk via SMS/WhatsApp.
-3. **Webhook Secret (Opsional namun Sangat Direkomendasikan):**
-   Setel nilai rahasia di `.kaigobiz-config.json` atau environment variable `WEBHOOK_SECRET` untuk menandatangani data webhook menggunakan HMAC-SHA256.
+   Masukkan nomor handphone GoBiz Anda dan verifikasi kode OTP yang masuk via SMS/WhatsApp (KaiGoBiz membatasi permintaan OTP otomatis dan menjaga sesi tetap hidup lewat token refresh serta pemulihan profil browser agar nomor aman dari pemblokiran GoBiz).
+3. **API Key Admin (`KAIGOBIZ_API_KEY`):**
+   Saat pertama kali server dijalankan atau lewat `install.sh`, KaiGoBiz otomatis membuat `KAIGOBIZ_API_KEY` berformat `kgb_...` di `.env`. Backend e-commerce Anda wajib mengirim header `X-API-Key` saat memanggil endpoint admin dan `POST /api/v1/payment/create` (kecuali `KAIGOBIZ_DISABLE_AUTH=true` untuk akses lokal privat atau `KAIGOBIZ_PUBLIC_CREATE=true` untuk mode widget publik).
+4. **Webhook Secret (Opsional namun Sangat Direkomendasikan):**
+   Setel nilai rahasia lewat environment variable `WEBHOOK_SECRET` (atau simpan di konfigurasi SQLite `app_config`) untuk menandatangani data webhook menggunakan HMAC-SHA256.
 
 ---
 
@@ -33,7 +35,9 @@ Cukup disetel 1 kali melalui Dashboard Admin KaiGoBiz (`http://localhost:3636`):
 Saat pembeli menekan tombol **"Bayar Sekarang"** di website e-commerce Anda, backend e-commerce mengirimkan request HTTP POST ke KaiGoBiz.
 
 * **Endpoint:** `POST /api/v1/payment/create`
-* **Content-Type:** `application/json`
+* **Headers:**
+  * `Content-Type: application/json`
+  * `X-API-Key: <KAIGOBIZ_API_KEY>` (wajib kecuali auth dinonaktifkan atau `KAIGOBIZ_PUBLIC_CREATE=true`)
 
 ### Request Body Schema
 
@@ -46,7 +50,8 @@ Saat pembeli menekan tombol **"Bayar Sekarang"** di website e-commerce Anda, bac
   "uniqueCodeMin": 1,
   "uniqueCodeMax": 249,
   "uniqueCodeType": "ADD",
-  "callbackUrl": "https://tokoanda.com/api/webhook/kaigobiz"
+  "callbackUrl": "https://tokoanda.com/api/webhook/kaigobiz",
+  "returnUrl": "https://tokoanda.com/order/INV-20260926-001/thanks"
 }
 ```
 
@@ -54,14 +59,15 @@ Saat pembeli menekan tombol **"Bayar Sekarang"** di website e-commerce Anda, bac
 
 | Field | Tipe | Wajib? | Deskripsi & Rekomendasi |
 |---|---|---|---|
-| `orderId` | String | Ya | ID unik pesanan dari e-commerce (1 s/d 100 karakter). Idempoten: request ulang dengan `orderId` dan `amount` yang sama dalam status PENDING akan mengembalikan data pembayaran yang sama. |
+| `orderId` | String | Ya | ID unik pesanan dari e-commerce (1 s/d 100 karakter). Idempoten: request ulang dengan `orderId` dan nominal dasar (`rawAmount`) yang sama dalam status PENDING akan mengembalikan data pembayaran yang sama. |
 | `amount` | Number | Ya | Nilai dasar pesanan dalam Rupiah (Rp 1 s/d Rp 100.000.000). |
 | `expiryMinutes` | Number | Tidak | Batas waktu pembayaran (1 s/d 1440 menit). Standar checkout normal: **3 - 5 menit**. Saat event flash sale: **2 menit**. |
 | `useUniqueCode` | Boolean | Tidak | Aktifkan pengacakan nominal otomatis agar mutasi QRIS dapat dicocokkan otomatis 100% tanpa salah akun. |
 | `uniqueCodeMin` | Number | Tidak | Nilai batas bawah kode unik (default: 1). |
 | `uniqueCodeMax` | Number | Tidak | Nilai batas atas kode unik (default: 250, maksimal 9999). Rekomendasi: **249** agar biaya tambahan bagi pembeli selalu di bawah Rp 250. |
 | `uniqueCodeType` | String | Tidak | `ADD` (menambahkan kode unik ke harga barang) atau `SUBTRACT` (mengurangkan kode unik dari harga barang sebagai diskon otomatis). |
-| `callbackUrl` | String | Tidak | URL webhook backend e-commerce Anda yang akan ditembak saat pembayaran berhasil. Dilindungi proteksi anti-SSRF. |
+| `callbackUrl` | String | Tidak | URL webhook server-to-server backend e-commerce Anda yang akan ditembak saat pembayaran berhasil. Dilindungi proteksi anti-SSRF dan DNS pinning. |
+| `returnUrl` | String | Tidak | URL halaman toko untuk mengalihkan browser pembeli secara otomatis setelah status pembayaran `PAID` pada halaman `/pay/:paymentId`. |
 
 ### Contoh Response Sukses (HTTP 200)
 
@@ -159,7 +165,9 @@ app.post('/api/webhook/kaigobiz', express.raw({ type: 'application/json' }), (re
 
   if (secret && signature) {
     const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(req.body).digest('hex');
-    if (signature !== expected) {
+    const a = Buffer.from(expected);
+    const b = Buffer.from(String(signature));
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       return res.status(401).send('Invalid signature');
     }
   }
@@ -244,7 +252,7 @@ Jika volume transaksi Anda membutuhkan ratusan pembayaran per detik bersamaan:
 
 ## 7. Pemeliharaan & Operasional Database SQLite
 
-KaiGoBiz menggunakan modul bawaan Node.js 26 (`node:sqlite`) dengan mode *Write-Ahead Logging* (WAL) dan sinkronisasi `NORMAL`:
+KaiGoBiz menggunakan modul bawaan Node.js 22+ LTS (`node:sqlite`) dengan mode *Write-Ahead Logging* (WAL), sinkronisasi `NORMAL`, dan permission file `0o600`:
 
 * **Lokasi File Database:** `.kaigobiz.db` di direktori aplikasi.
 * **Performa:** Mampu melayani 2.000 s/d 5.000 penulisan per detik tanpa memblokir pembaca mutasi.

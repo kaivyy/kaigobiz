@@ -18,6 +18,7 @@ build/
 
 # Debug & Temporary Artifacts
 *.png
+!public/*.png
 *.jpg
 *.jpeg
 *.log

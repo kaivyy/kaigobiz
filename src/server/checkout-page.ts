@@ -8,7 +8,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
     amount: order.amount,
     status: order.status,
     expiresAt: order.expiresAt,
-    callbackUrl: order.callbackUrl || null,
+    returnUrl: order.returnUrl || null,
   }).replace(/</g, '\\u003c');
 
   return `<!DOCTYPE html>
@@ -16,6 +16,11 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090d16" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <title>Pembayaran QRIS: ${escapeHtml(order.orderId)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -506,6 +511,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
     </div>
 
     <footer class="footer-note">
+      <img src="/favicon-32x32.png" alt="" width="16" height="16" style="vertical-align: -3px; border-radius: 4px; margin-right: 4px;" />
       Diproses aman oleh <strong>KaiGoBiz</strong> Gateway
     </footer>
   </main>
@@ -515,7 +521,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
   <script>
     (function() {
       const order = ${orderJson};
-      const rawQris = ${JSON.stringify(order.qrisString || '')};
+      const rawQris = ${JSON.stringify(order.qrisString || '').replace(/</g, '\\u003c')};
 
       const qrActiveView = document.getElementById('qr-active-view');
       const timerBanner = document.getElementById('timer-banner');
@@ -531,6 +537,7 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
       let timerInterval = null;
       let pollInterval = null;
       let isCompleted = false;
+      let isPolling = false;
 
       function showToast(msg) {
         if (!toast) return;
@@ -550,9 +557,9 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
         if (stateExpired) stateExpired.classList.remove('active');
         if (stateSuccess) stateSuccess.classList.add('active');
 
-        if (order.callbackUrl && /^https?:\/\//i.test(order.callbackUrl)) {
+        if (order.returnUrl && /^https?:\/\//i.test(order.returnUrl)) {
           setTimeout(() => {
-            window.location.href = order.callbackUrl;
+            window.location.href = order.returnUrl;
           }, 3000);
         }
       }
@@ -591,7 +598,8 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
       }
 
       async function checkPaymentStatus() {
-        if (isCompleted) return;
+        if (isCompleted || isPolling) return;
+        isPolling = true;
         try {
           const res = await fetch('/api/v1/payment/status/' + encodeURIComponent(order.paymentId));
           const data = await res.json();
@@ -600,7 +608,9 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
           } else if (data.status === 'EXPIRED') {
             showExpiredScreen();
           }
-        } catch {}
+        } catch {} finally {
+          isPolling = false;
+        }
       }
 
       // Initial state check
@@ -661,8 +671,8 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
       });
 
       btnSuccessAction?.addEventListener('click', () => {
-        if (order.callbackUrl && /^https?:\/\//i.test(order.callbackUrl)) {
-          window.location.href = order.callbackUrl;
+        if (order.returnUrl && /^https?:\/\//i.test(order.returnUrl)) {
+          window.location.href = order.returnUrl;
         } else {
           window.close();
         }
@@ -677,8 +687,8 @@ export function renderCheckoutPage(order: PaymentOrder, merchantName: string = '
 </html>`;
 }
 
-function escapeHtml(str: string): string {
-  return str
+export function escapeHtml(str: string): string {
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

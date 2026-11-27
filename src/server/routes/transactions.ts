@@ -1,16 +1,17 @@
 import { Hono } from 'hono';
 import { getStorage } from '../../core/storage';
-import { SessionManager } from '../../core/session-manager';
+import { getSessionManager } from '../../core/session-manager';
 import { GoBizClient } from '../../core/gobiz-client';
+import { syncGoBizTransactions } from '../../core/gobiz-sync';
 
 const transactions = new Hono();
 const storage = getStorage();
-const manager = new SessionManager(storage);
+const manager = getSessionManager(storage);
 const client = new GoBizClient();
 
 transactions.get('/', async (c) => {
-  const session = await manager.refreshIfNeeded();
-  if (!session) {
+  const session = (await manager.refreshIfNeeded()) || (await manager.getSession());
+  if (!session || manager.isHardExpired(session) || manager.needsRelogin) {
     const saved = (await storage.getTransactions()).filter((tx) => !tx.id.startsWith('tx_reconcile'));
     return c.json({
       success: true,
@@ -20,18 +21,19 @@ transactions.get('/', async (c) => {
       message: 'Sesi GoBiz belum terhubung.',
     });
   }
+
   try {
-    const items = await client.fetchTransactions(session);
-    if (items.length > 0) {
-      await storage.saveTransactions?.(items);
-    }
+    await syncGoBizTransactions(storage, manager, client, {
+      hoursBack: 72,
+      maxPages: 4,
+    });
     const all = (await storage.getTransactions()).filter((tx) => !tx.id.startsWith('tx_reconcile'));
     return c.json({ success: true, connected: true, count: all.length, transactions: all });
   } catch (err: any) {
     const saved = (await storage.getTransactions()).filter((tx) => !tx.id.startsWith('tx_reconcile'));
     return c.json({
       success: false,
-      connected: true,
+      connected: !manager.needsRelogin,
       fallback: true,
       count: saved.length,
       transactions: saved,

@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+Image.MAX_IMAGE_PIXELS = 40_000_000
+
 try:
     import pillow_heif
     pillow_heif.register_heif_opener()
@@ -172,22 +174,25 @@ def load_image_safely(file_path: str):
             header = f.read(5)
             if header.startswith(b"%PDF"):
                 prefix = file_path + "_page"
-                subprocess.run(
-                    ["pdftoppm", "-png", "-r", "200", "-f", "1", "-l", "1", file_path, prefix],
-                    check=True,
-                    timeout=10,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                for candidate in [f"{prefix}-1.png", f"{prefix}-01.png", f"{prefix}-001.png"]:
-                    if os.path.exists(candidate):
-                        with Image.open(candidate) as page_img:
-                            res = np.array(page_img.convert("RGB"))
-                        try:
-                            os.unlink(candidate)
-                        except Exception:
-                            pass
-                        return res
+                try:
+                    subprocess.run(
+                        ["pdftoppm", "-png", "-r", "200", "-f", "1", "-l", "1", file_path, prefix],
+                        check=True,
+                        timeout=10,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    for candidate in [f"{prefix}-1.png", f"{prefix}-01.png", f"{prefix}-001.png"]:
+                        if os.path.exists(candidate):
+                            with Image.open(candidate) as page_img:
+                                return np.array(page_img.convert("RGB"))
+                finally:
+                    for candidate in [f"{prefix}-1.png", f"{prefix}-01.png", f"{prefix}-001.png"]:
+                        if os.path.exists(candidate):
+                            try:
+                                os.unlink(candidate)
+                            except Exception:
+                                pass
     except Exception:
         pass
 

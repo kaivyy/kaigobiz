@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-11-28
+
+### Added
+- Auto-Generated Admin API Key (`src/core/api-key.ts`, `install.sh`): Automatically generates a high-entropy `kgb_`-prefixed `KAIGOBIZ_API_KEY` on server startup or installation if missing, writes it to `.env` with `0o600` permissions (plus SQLite `app_config` fallback), and supports `KAIGOBIZ_DISABLE_AUTH=true` for trusted local setups.
+- In-Page API Key Modal UI (`index.html`, `src/dashboard/app.ts`, `src/dashboard/style.css`): Replaced native `window.prompt` and toast popups with an accessible in-page modal (`#api-key-modal`) featuring password masking toggle, live server validation, inline status feedback, Escape/backdrop dismissal, and key clearing.
+- KaiGoBiz Brand Icons & Favicons (`public/`): Added geometric dark-slate + sky-blue/emerald KaiGoBiz icon assets (`favicon.svg`, `favicon.ico`, `favicon-32x32.png`, `apple-touch-icon.png`, `kaigobiz-icon.png`) across the dashboard header, browser tabs, hosted checkout page, and 404 page.
+- Non-OTP Session Renewal (`POST /api/v1/auth/refresh`) & Auth Health: Added explicit token refresh endpoint and sanitized `health` telemetry inside `GET /api/v1/auth/status`, plus dashboard actions to renew tokens or attempt browser recovery without requesting an OTP.
+- Silent Camoufox Session Fallback (`camoufox_gobiz_worker.py --refresh-only`, `src/core/browser-refresh.ts`): Automatically attempts a zero-OTP browser cookie/token recovery using `.camoufox-profile` when direct GoBiz HTTP refresh encounters anti-bot 401/403 responses, and detects `already_authenticated` browser profiles before sending SMS OTP.
+- Persistent OTP Anti-Ban Guard (`src/core/otp-guard.ts`): Tracks per-phone OTP requests in storage enforcing 60-second cooldowns, 3 requests/hour, and 5 requests/24h limits, alongside an active-session `409 SESSION_ALREADY_ACTIVE` guard on `POST /api/v1/auth/request-otp`.
+- Shared Transaction Sync Coordinator (`src/core/gobiz-sync.ts`): Unified reconciler, status polling, and `/api/v1/transactions` onto single-flight fetching with a shared cooldown and global rate-limit circuit breaker.
+- Dedicated Checkout Redirect URL: Separated `returnUrl` (post-payment browser redirect) from `callbackUrl` (server-to-server webhook) across storage adapters, `/api/v1/payment/create`, and the checkout page.
+
+### Security & Anti-Ban
+- Pinned Per-Session Fingerprint & Cookie Rotation (`src/core/gobiz-client.ts`): Bound one consistent `x-uniqueid` UUID and browser fingerprint per session (eliminating random Windows/macOS User-Agent switching), aligned portal `Origin` / `client_id` (`go-biz-web-new`) / `x-appversion` headers, preserved full cookie jars (`cf_clearance`, `__cf_bm`, `browser_id`), and extracted rotated `refresh_token` values from `Set-Cookie` headers.
+- Real JWT Expiry & Persisted Guard State (`src/core/session-manager.ts`): Calculated session expiry from actual JWT `exp`/`iat` claims (with `expires_in` fallback) and adaptive refresh buffers (20% of TTL), persisted `authGuardState` in SQLite `app_config` across restarts, and applied exponential backoff + `Retry-After` handling on HTTP `429` / WAF `403` without marking valid sessions permanently dead.
+- Web & API Hardening (`src/server/index.ts`, `src/server/reconciler.ts`, `src/server/checkout-page.ts`): Split CORS policies (`ALLOWED_ORIGINS`), timing-safe `KAIGOBIZ_API_KEY` verification middleware, request body size limits, CSP/XFO/nosniff security headers, pinned DNS `http.Agent`/`https.Agent` with `maxRedirects: 0` against SSRF DNS rebinding, strict XSS escaping on checkout/dashboard HTML, atomic SQLite paid claim (`markOrderPaidIfPending`) with unique paid transaction index (`idx_orders_paid_tx_unique`), strict EMVCo QRIS validation in `inspectQRIS`, `0o600` database/temp file permissions, `axios` upgraded to `^1.21.1`, and Node.js `child_process` handle tracking without PID-file `SIGKILL`.
+
+### Fixed
+- Failed Webhook Retry Starvation: Ensured failed webhook deliveries are retried even when no `PENDING` orders remain.
+- Zombie Session Resurrection: Guarded legacy `.kaigobiz-session.json` migration with a one-time flag (`json_session_migrated`) so logged-out sessions never reappear on restart.
+- Stale QRIS on Unique-Code Retry: Regenerated `qrisString` and `qrisQrUrl` whenever unique-code index collision selects a new final amount.
+- Phone Regex & Transaction Status Mapping: Preserved middle `62` digits in Indonesian phone numbers (`format_id_phone`), mapped GoBiz `REFUND`/`PARTIAL_REFUND`/`VOID` statuses to `FAILED`, stopped polling GoBiz blindly when a `stopBeforeTimestamp` threshold is reached, and updated `install.sh` to provision Node.js 22 LTS and Camoufox.
+
+### Tests
+- Expanded automated Vitest suite to 63 passing tests covering JWT expiry parsing, `Set-Cookie` rotation, pinned fingerprints, adaptive pagination, persisted 429/401 guard state, OTP anti-ban caps, auto-generated `KAIGOBIZ_API_KEY`, dashboard API key modal, SSRF, XSS escaping, atomic SQLite claiming, and webhook retries.
+
+---
+
 ## [1.1.2] - 2026-10-31
 
 ### Fixed

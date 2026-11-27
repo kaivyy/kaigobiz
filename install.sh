@@ -79,21 +79,21 @@ else
     log_warn "Non-Debian/Ubuntu OS detected. Please ensure curl, git, python3, and libzbar are installed manually."
 fi
 
-# 3. Check and Setup Node.js (Require Node.js >= 18)
+# 3. Check and Setup Node.js (Require Node.js >= 22 for built-in node:sqlite)
 NODE_INSTALLED=false
 if command -v node &> /dev/null; then
     NODE_MAJOR=$(node -v | cut -d'.' -f1 | tr -d 'v')
-    if [[ "${NODE_MAJOR}" -ge 18 ]]; then
+    if [[ "${NODE_MAJOR}" -ge 22 ]]; then
         NODE_INSTALLED=true
-        log_success "Found Node.js $(node -v) (Satisfies >= v18 requirement)"
+        log_success "Found Node.js $(node -v) (Satisfies >= v22 requirement)"
     else
-        log_warn "Installed Node.js $(node -v) is older than v18."
+        log_warn "Installed Node.js $(node -v) is older than v22 (needed for node:sqlite)."
     fi
 fi
 
 if [[ "${NODE_INSTALLED}" = false ]]; then
-    log_info "Installing Node.js 20 LTS from NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    log_info "Installing Node.js 22 LTS from NodeSource..."
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
     log_success "Node.js $(node -v) and npm $(npm -v) installed successfully."
 fi
@@ -107,16 +107,22 @@ else
     log_success "Found PM2 $(pm2 -v)"
 fi
 
-# 5. Install Python QR Decoding Modules
-log_info "Configuring Python QR extraction modules..."
+# 5. Install Python QR Decoding & Camoufox Modules
+log_info "Configuring Python QR extraction and Camoufox modules..."
 PIP_ARGS="--quiet --no-cache-dir"
 if python3 -m pip install --help | grep -q -- "--break-system-packages"; then
     PIP_ARGS="${PIP_ARGS} --break-system-packages"
 fi
 
-python3 -m pip install ${PIP_ARGS} zxing-cpp pyzbar opencv-python-headless pillow pillow-heif numpy > /dev/null 2>&1 || {
-    log_warn "Some Python packages failed to install. QR decoding will fall back to client-side jsQR."
+python3 -m pip install ${PIP_ARGS} zxing-cpp pyzbar opencv-python-headless pillow pillow-heif numpy || {
+    log_warn "Some Python QR packages failed to install. QR decoding will fall back to client-side jsQR."
 }
+
+if python3 -m pip install ${PIP_ARGS} "camoufox[geoip]"; then
+    python3 -m camoufox fetch || log_warn "Camoufox browser binary fetch failed; run 'python3 -m camoufox fetch' manually."
+else
+    log_warn "Camoufox failed to install; OTP login worker will be unavailable until installed."
+fi
 
 # 6. Install Project Dependencies
 log_info "Installing project npm dependencies..."
@@ -125,15 +131,25 @@ npm install --silent
 # 7. Setup Configuration (.env)
 if [[ ! -f ".env" ]]; then
     log_info "Creating default .env configuration file..."
-    cat << "EOF" > .env
+    AUTO_API_KEY=$(node -e "console.log('kgb_' + require('crypto').randomBytes(24).toString('hex'))")
+    cat << EOF > .env
 PORT=3636
 NODE_ENV=production
+KAIGOBIZ_API_KEY=${AUTO_API_KEY}
 # Default static QRIS template (can be updated via Dashboard)
 STATIC_QRIS_TEMPLATE=00020101021126390013ID.GO-JEK.WWW01189360091430000000005204581253033605802ID5914KAI GOBIZ SHOP6007JAKARTA63045B63
 EOF
-    log_success "Created .env with default settings (Port 3636)."
+    chmod 600 .env || true
+    log_success "Created .env with auto-generated KAIGOBIZ_API_KEY (Port 3636)."
 else
-    log_info "Existing .env file preserved."
+    if ! grep -Eq '^[[:space:]]*(KAIGOBIZ_API_KEY|API_KEY)=' .env; then
+        AUTO_API_KEY=$(node -e "console.log('kgb_' + require('crypto').randomBytes(24).toString('hex'))")
+        printf "\nKAIGOBIZ_API_KEY=%s\n" "${AUTO_API_KEY}" >> .env
+        chmod 600 .env || true
+        log_success "Added auto-generated KAIGOBIZ_API_KEY to existing .env."
+    else
+        log_info "Existing .env file and API key preserved."
+    fi
 fi
 
 # 8. Build Production Assets (Dashboard, Widget, Server bundle)
@@ -170,6 +186,7 @@ echo ""
 echo -e "  ${BOLD}Web Dashboard:${NC}    http://${SERVER_IP}:${PORT_NUM} (or http://localhost:${PORT_NUM})"
 echo -e "  ${BOLD}Hosted Checkout:${NC}  http://${SERVER_IP}:${PORT_NUM}/pay/:paymentId"
 echo -e "  ${BOLD}Embed Widget:${NC}     http://${SERVER_IP}:${PORT_NUM}/kaigobiz.js"
+echo -e "  ${BOLD}Admin API Key:${NC}    Tersimpan di ${TARGET_DIR}/.env (cek: grep KAIGOBIZ_API_KEY .env)"
 echo ""
 echo -e "  ${BOLD}Helpful PM2 Commands:${NC}"
 echo -e "    - View live logs:     ${CYAN}pm2 logs kaigobiz${NC}"

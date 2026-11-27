@@ -1,7 +1,9 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
+import axios from 'axios';
 import app from '../src/server/index';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 describe('KaiGoBiz REST API Server Routes', () => {
   afterAll(async () => {
@@ -476,5 +478,323 @@ describe('KaiGoBiz REST API Server Routes', () => {
       const pending = await storage.getPendingOrders();
       expect(pending.some((o) => o.paymentId === order.paymentId)).toBe(true);
     }
+  });
+
+  it('Checkout 404 should escape reflected XSS payloads and renderCheckoutPage should omit callbackUrl', async () => {
+    const res = await app.request('/pay/%3Csvg%20onload=alert(1)%3E');
+    expect(res.status).toBe(404);
+    const html404 = await res.text();
+    expect(html404).not.toContain('<svg onload=alert(1)>');
+    expect(html404).toContain('&lt;svg onload=alert(1)&gt;');
+
+    const { renderCheckoutPage } = await import('../src/server/checkout-page');
+    const html = renderCheckoutPage(
+      {
+        paymentId: 'pay_sec_1',
+        orderId: 'ORD-SEC-1',
+        amount: 20000,
+        qrisString: '000201</script><script>alert(2)</script>',
+        qrisQrUrl: 'data:image/png;base64,abc',
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+        callbackUrl: 'https://internal-webhook.example.com/secret-hook',
+        returnUrl: 'https://shop.example.com/thanks',
+      },
+      'Merchant'
+    );
+    expect(html).not.toContain('internal-webhook.example.com');
+    expect(html).not.toContain('</script><script>alert(2)');
+    expect(html).toContain('shop.example.com/thanks');
+  });
+
+  it('SSRF URL validation should block IPv6 loopback, mapped IPv4, CGNAT, credentials, and nip.io', async () => {
+    const { isSafeWebhookUrl } = await import('../src/server/reconciler');
+    expect(isSafeWebhookUrl('http://[::1]:3636/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://[fe80::1]/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://[::ffff:127.0.0.1]/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://[::ffff:7f00:1]/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://10.0.0.1.nip.io/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://100.64.0.1/hook')).toBe(false);
+    expect(isSafeWebhookUrl('http://user:pass@example.com/hook')).toBe(false);
+    expect(isSafeWebhookUrl('https://example.com/webhook')).toBe(true);
+  });
+
+  it('API key middleware should protect admin endpoints when KAIGOBIZ_API_KEY is configured', async () => {
+    process.env.KAIGOBIZ_API_KEY = 'secret-test-key-123';
+    try {
+      const unauthTx = await app.request('/api/v1/transactions');
+      expect(unauthTx.status).toBe(401);
+
+      const wrongKey = await app.request('/api/v1/payment/template', {
+        headers: { 'X-API-Key': 'wrong-key' },
+      });
+      expect(wrongKey.status).toBe(401);
+
+      const validKey = await app.request('/api/v1/payment/template', {
+        headers: { 'X-API-Key': 'secret-test-key-123' },
+      });
+      expect(validKey.status).toBe(200);
+
+      const healthRes = await app.request('/api/v1/health');
+      expect(healthRes.status).toBe(200);
+    } finally {
+      delete process.env.KAIGOBIZ_API_KEY;
+    }
+  });
+
+  it('Idempotency should reuse uniqueCode orders, handle expired orders cleanly, and return updated QR on retry', async () => {
+    const { getStorage } = await import('../src/core/storage');
+    const storage = getStorage();
+
+    // Seed an already-expired PENDING order using unique code 42
+    await storage.savePaymentOrder({
+      paymentId: 'pay_expired_seed',
+      orderId: 'ORD-EXPIRED-SEED-' + Date.now(),
+      amount: 88042,
+      rawAmount: 88000,
+      uniqueCode: 42,
+      status: 'PENDING',
+      createdAt: new Date(Date.now() - 120000).toISOString(),
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+      qrisString: '000201...',
+    });
+
+    const uniqOrderId = 'ORD-REUSE-UNIQ-' + Date.now();
+    const res1 = await app.request('/api/v1/payment/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderId: uniqOrderId,
+        amount: 88000,
+        useUniqueCode: true,
+        uniqueCodeMin: 42,
+        uniqueCodeMax: 42,
+      }),
+    });
+    expect(res1.status).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.amount).toBe(88042);
+    expect(body1.qrisString).toContain('540588042');
+
+    // Second request with same base amount and orderId must reuse body1
+    const res2 = await app.request('/api/v1/payment/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderId: uniqOrderId,
+        amount: 88000,
+        useUniqueCode: true,
+        uniqueCodeMin: 42,
+        uniqueCodeMax: 42,
+      }),
+    });
+    expect(res2.status).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.paymentId).toBe(body1.paymentId);
+    expect(body2.reused).toBe(true);
+  });
+
+  it('Reconciler should still retry failed webhooks when pendingOrders is empty', async () => {
+    const { reconcilePaymentOrders } = await import('../src/server/reconciler');
+    const { getStorage } = await import('../src/core/storage');
+    const { SessionManager } = await import('../src/core/session-manager');
+    const { GoBizClient } = await import('../src/core/gobiz-client');
+    const storage = getStorage();
+
+    await storage.expireStalePendingOrders?.(new Date(Date.now() + 86400000).toISOString());
+
+    const failedOrderId = 'pay_retry_empty_' + Date.now();
+    await storage.savePaymentOrder({
+      paymentId: failedOrderId,
+      orderId: 'ORD-RETRY-' + Date.now(),
+      amount: 19000,
+      status: 'PAID',
+      createdAt: new Date(Date.now() - 120000).toISOString(),
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      paidAt: new Date(Date.now() - 60000).toISOString(),
+      transactionId: 'tx_retry_unique_' + Date.now(),
+      callbackUrl: 'https://example.com/retry-hook',
+      callbackStatus: 'FAILED',
+      callbackRetries: 0,
+      lastCallbackAttempt: new Date(Date.now() - 60000).toISOString(),
+      qrisString: '000201...',
+    });
+
+    const mgr = new SessionManager(storage);
+    const client = new GoBizClient();
+    await reconcilePaymentOrders(storage, mgr, client);
+
+    const updated = await storage.getPaymentOrder(failedOrderId);
+    expect(updated?.callbackRetries).toBe(1);
+  });
+
+  it('Auth endpoints should expose sanitized health, enforce active-session guard, and handle /refresh safely', async () => {
+    const { getStorage } = await import('../src/core/storage');
+    const { getSessionManager } = await import('../src/core/session-manager');
+    const storage = getStorage();
+    const mgr = getSessionManager(storage);
+
+    // Without session -> POST /refresh returns 404
+    await mgr.clearSession();
+    const noSessRes = await app.request('/api/v1/auth/refresh', { method: 'POST' });
+    expect(noSessRes.status).toBe(404);
+
+    // With valid session -> GET /status & POST /refresh must never leak tokens
+    await mgr.saveSession({
+      phone_number: '6281234567890',
+      merchant_id: 'G999',
+      outlet_name: 'Toko Anti Ban',
+      owner_name: 'Owner',
+      access_token: 'secret_access_token_do_not_leak',
+      refresh_token: 'secret_refresh_token_do_not_leak',
+      cookie: 'access_token=secret_access_token_do_not_leak; refresh_token=secret_refresh_token_do_not_leak',
+      expires_at: new Date(Date.now() + 7200_000).toISOString(),
+    });
+
+    try {
+      const statusRes = await app.request('/api/v1/auth/status');
+      expect(statusRes.status).toBe(200);
+      const statusBody = await statusRes.json();
+      expect(statusBody.connected).toBe(true);
+      expect(statusBody.health).toBeDefined();
+      expect(statusBody.health.needs_relogin).toBe(false);
+      expect(JSON.stringify(statusBody)).not.toContain('secret_access_token_do_not_leak');
+      expect(JSON.stringify(statusBody)).not.toContain('secret_refresh_token_do_not_leak');
+
+      const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+        status: 200,
+        data: {
+          data: {
+            access_token: 'refreshed_secret_access_token',
+            refresh_token: 'refreshed_secret_refresh_token',
+            expires_in: 7200,
+          },
+        },
+        headers: {},
+      });
+      try {
+        const refreshRes = await app.request('/api/v1/auth/refresh', { method: 'POST' });
+        expect(refreshRes.status).toBe(200);
+        const refreshBody = await refreshRes.json();
+        expect(refreshBody.success).toBe(true);
+        expect(JSON.stringify(refreshBody)).not.toContain('secret_access_token_do_not_leak');
+        expect(JSON.stringify(refreshBody)).not.toContain('refreshed_secret_access_token');
+        expect(JSON.stringify(refreshBody)).not.toContain('refreshed_secret_refresh_token');
+      } finally {
+        postSpy.mockRestore();
+      }
+
+      // Duplicate /request-otp on already-active phone must return 409 SESSION_ALREADY_ACTIVE
+      const dupOtpRes = await app.request('/api/v1/auth/request-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: '081234567890' }),
+      });
+      expect(dupOtpRes.status).toBe(409);
+      const dupOtpBody = await dupOtpRes.json();
+      expect(dupOtpBody.code).toBe('SESSION_ALREADY_ACTIVE');
+
+      // Permanent auth rejection on /refresh should surface 401 RELOGIN_REQUIRED
+      const post401Spy = vi.spyOn(axios, 'post').mockRejectedValueOnce({
+        response: { status: 401, data: { errors: [{ code: 'goid:error:revoked_token' }] } },
+      });
+      try {
+        const deadRefreshRes = await app.request('/api/v1/auth/refresh', { method: 'POST' });
+        expect(deadRefreshRes.status).toBe(401);
+        const deadBody = await deadRefreshRes.json();
+        expect(deadBody.code).toBe('RELOGIN_REQUIRED');
+      } finally {
+        post401Spy.mockRestore();
+      }
+    } finally {
+      await mgr.clearSession();
+    }
+  });
+
+  it('API key initializer should auto-generate, reuse from .env, and respect disable flag', async () => {
+    const { generateApiKey, maskApiKey, ensureApiKeyInitialized } = await import('../src/core/api-key');
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaigobiz-apikey-test-'));
+    const envPath = path.join(tempDir, '.env');
+    const prevKey = process.env.KAIGOBIZ_API_KEY;
+    const prevDisable = process.env.KAIGOBIZ_DISABLE_AUTH;
+
+    try {
+      const k1 = generateApiKey();
+      const k2 = generateApiKey();
+      expect(k1.startsWith('kgb_')).toBe(true);
+      expect(k1.length).toBeGreaterThanOrEqual(40);
+      expect(k1).not.toBe(k2);
+      expect(maskApiKey(k1)).toContain('...');
+
+      delete process.env.KAIGOBIZ_API_KEY;
+      delete process.env.KAIGOBIZ_DISABLE_AUTH;
+
+      const init1 = await ensureApiKeyInitialized({ envPath });
+      expect(init1.generated).toBe(true);
+      expect(init1.source).toBe('generated');
+      expect(init1.key.startsWith('kgb_')).toBe(true);
+      expect(fs.existsSync(envPath)).toBe(true);
+      expect(fs.readFileSync(envPath, 'utf-8')).toContain(`KAIGOBIZ_API_KEY=${init1.key}`);
+
+      // Clear env var in memory and re-initialize -> must reuse same key from .env
+      delete process.env.KAIGOBIZ_API_KEY;
+      const init2 = await ensureApiKeyInitialized({ envPath });
+      expect(init2.generated).toBe(false);
+      expect(init2.source).toBe('env');
+      expect(init2.key).toBe(init1.key);
+
+      // Disable flag opts out cleanly
+      delete process.env.KAIGOBIZ_API_KEY;
+      process.env.KAIGOBIZ_DISABLE_AUTH = 'true';
+      const disabledInit = await ensureApiKeyInitialized({ envPath });
+      expect(disabledInit.source).toBe('disabled');
+      expect(disabledInit.key).toBe('');
+    } finally {
+      if (prevKey === undefined) delete process.env.KAIGOBIZ_API_KEY;
+      else process.env.KAIGOBIZ_API_KEY = prevKey;
+      if (prevDisable === undefined) delete process.env.KAIGOBIZ_DISABLE_AUTH;
+      else process.env.KAIGOBIZ_DISABLE_AUTH = prevDisable;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('Checkout page and dashboard HTML should reference generated KaiGoBiz favicons', async () => {
+    const { renderCheckoutPage } = await import('../src/server/checkout-page');
+    const html = renderCheckoutPage(
+      {
+        paymentId: 'pay_icon_1',
+        orderId: 'ORD-ICON-1',
+        amount: 15000,
+        qrisString: '000201...',
+        qrisQrUrl: 'data:image/png;base64,abc',
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      },
+      'Toko Icon'
+    );
+    expect(html).toContain('/favicon.svg');
+    expect(html).toContain('/favicon.ico');
+    expect(html).toContain('/favicon-32x32.png');
+
+    const rootHtml = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf-8');
+    const dashHtml = fs.readFileSync(path.join(process.cwd(), 'src/dashboard/index.html'), 'utf-8');
+    expect(rootHtml).toBe(dashHtml);
+    expect(rootHtml).toContain('/favicon.svg');
+    expect(rootHtml).toContain('/kaigobiz-icon.png');
+    expect(rootHtml).toContain('api-key-config-btn');
+  });
+
+  it('Dashboard should expose in-page API key modal without window.prompt', () => {
+    const rootHtml = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf-8');
+    const dashApp = fs.readFileSync(path.join(process.cwd(), 'src/dashboard/app.ts'), 'utf-8');
+    expect(rootHtml).toContain('v1.2.0');
+    expect(rootHtml).toContain('id="api-key-modal"');
+    expect(rootHtml).toContain('id="api-key-modal-form"');
+    expect(rootHtml).toContain('id="api-key-modal-input"');
+    expect(rootHtml).toContain('id="api-key-modal-status"');
+    expect(dashApp).toContain('openApiKeyModal');
+    expect(dashApp).not.toContain('window.prompt');
   });
 });

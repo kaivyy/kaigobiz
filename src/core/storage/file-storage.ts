@@ -6,18 +6,21 @@ export interface FileStorageConfig {
   sessionFile?: string;
   txFile?: string;
   ordersFile?: string;
+  configFile?: string;
 }
 
 export class FileStorageAdapter implements StorageAdapter {
   private sessionFile: string;
   private txFile: string;
   private ordersFile: string;
+  private configFile: string;
 
   constructor(config?: FileStorageConfig) {
     const baseDir = process.cwd();
     this.sessionFile = config?.sessionFile || path.join(baseDir, '.kaigobiz-session.json');
     this.txFile = config?.txFile || path.join(baseDir, '.kaigobiz-tx.json');
     this.ordersFile = config?.ordersFile || path.join(baseDir, '.kaigobiz-orders.json');
+    this.configFile = config?.configFile || path.join(baseDir, '.kaigobiz-config.json');
   }
 
   private ensureDirExists(filePath: string) {
@@ -31,13 +34,12 @@ export class FileStorageAdapter implements StorageAdapter {
     try {
       this.ensureDirExists(filePath);
       const tempPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}`;
-      fs.writeFileSync(tempPath, content, 'utf-8');
+      fs.writeFileSync(tempPath, content, { encoding: 'utf-8', mode: 0o600 });
       fs.renameSync(tempPath, filePath);
       return true;
     } catch {
       try {
-        // Fallback for filesystem environments where rename across partitions fails
-        fs.writeFileSync(filePath, content, 'utf-8');
+        fs.writeFileSync(filePath, content, { encoding: 'utf-8', mode: 0o600 });
         return true;
       } catch {
         return false;
@@ -183,6 +185,86 @@ export class FileStorageAdapter implements StorageAdapter {
         (o.callbackRetries || 0) < maxRetries &&
         (!o.lastCallbackAttempt || now - new Date(o.lastCallbackAttempt).getTime() >= retryCooldownMs)
     );
+  }
+
+  async markOrderPaidIfPending(paymentId: string, transactionId: string, paidAt: string): Promise<boolean> {
+    const orders = await this.getAllOrders();
+    const alreadyUsed = orders.some((o) => o.status === 'PAID' && o.transactionId === transactionId);
+    if (alreadyUsed) return false;
+    const idx = orders.findIndex((o) => o.paymentId === paymentId);
+    if (idx < 0 || orders[idx].status !== 'PENDING') return false;
+    orders[idx] = {
+      ...orders[idx],
+      status: 'PAID',
+      paidAt,
+      transactionId,
+      callbackRetries: 0,
+      lastCallbackAttempt: paidAt,
+    };
+    return this.writeAtomic(this.ordersFile, JSON.stringify(orders.slice(0, 500), null, 2));
+  }
+
+  async updateOrderCallbackStatus(
+    paymentId: string,
+    status: 'SUCCESS' | 'FAILED',
+    lastAttempt: string,
+    incrementRetries: boolean = false
+  ): Promise<boolean> {
+    const orders = await this.getAllOrders();
+    const idx = orders.findIndex((o) => o.paymentId === paymentId);
+    if (idx < 0 || orders[idx].callbackStatus === 'SUCCESS') return false;
+    orders[idx] = {
+      ...orders[idx],
+      callbackStatus: status,
+      lastCallbackAttempt: lastAttempt,
+      callbackRetries: incrementRetries ? (orders[idx].callbackRetries || 0) + 1 : orders[idx].callbackRetries || 0,
+    };
+    return this.writeAtomic(this.ordersFile, JSON.stringify(orders.slice(0, 500), null, 2));
+  }
+
+  async expireStalePendingOrders(nowIso?: string): Promise<number> {
+    const orders = await this.getAllOrders();
+    const cutoff = nowIso ? new Date(nowIso).getTime() : Date.now();
+    let count = 0;
+    for (const o of orders) {
+      if (o.status === 'PENDING' && new Date(o.expiresAt).getTime() <= cutoff) {
+        o.status = 'EXPIRED';
+        count++;
+      }
+    }
+    if (count > 0) {
+      this.writeAtomic(this.ordersFile, JSON.stringify(orders.slice(0, 500), null, 2));
+    }
+    return count;
+  }
+
+  async getRecentTransactions(sinceIso: string, limit: number = 500): Promise<TransactionData[]> {
+    const txs = await this.getTransactions();
+    const sinceTime = new Date(sinceIso).getTime();
+    return txs
+      .filter((tx) => new Date(tx.timestamp).getTime() >= sinceTime)
+      .slice(0, Math.max(1, limit));
+  }
+
+  async getConfig(): Promise<Record<string, any>> {
+    try {
+      if (!fs.existsSync(this.configFile)) return {};
+      return JSON.parse(fs.readFileSync(this.configFile, 'utf-8')) || {};
+    } catch {
+      return {};
+    }
+  }
+
+  async setConfig(patch: Record<string, any>): Promise<boolean> {
+    const current = await this.getConfig();
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === undefined || String(v).trim() === '') {
+        delete current[k];
+      } else {
+        current[k] = String(v).trim();
+      }
+    }
+    return this.writeAtomic(this.configFile, JSON.stringify(current, null, 2));
   }
 
   private async getAllOrders(): Promise<PaymentOrder[]> {

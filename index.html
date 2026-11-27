@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b0f19">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <title>KaiGoBiz - Merchant Payment Gateway</title>
   <link rel="stylesheet" href="/src/dashboard/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,18 +19,13 @@
     <!-- Top Navigation Bar -->
     <header class="top-nav">
       <div class="nav-brand">
-        <div class="brand-logo" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect width="20" height="14" x="2" y="5" rx="2"/>
-            <line x1="2" x2="22" y1="10" y2="10"/>
-            <path d="M6 15h.01"/>
-            <path d="M10 15h.01"/>
-          </svg>
+        <div class="brand-logo">
+          <img src="/kaigobiz-icon.png" alt="Logo KaiGoBiz" width="38" height="38" class="brand-logo-img" />
         </div>
         <div class="brand-meta">
           <div class="brand-title-row">
             <span class="brand-name">KaiGoBiz</span>
-            <span class="version-tag">v1.1.1</span>
+            <span class="version-tag">v1.2.0</span>
           </div>
           <span class="brand-desc">GoBiz Gateway &amp; Scraper Infrastructure</span>
         </div>
@@ -67,6 +67,13 @@
 
       <!-- Right System Status Indicators -->
       <div class="nav-controls">
+        <button class="pill-btn endpoint-pill" id="api-key-config-btn" type="button" title="Atur KAIGOBIZ_API_KEY untuk akses dashboard" aria-label="Atur API Key">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+          </svg>
+          <span id="api-key-btn-label">API Key</span>
+        </button>
+
         <button class="pill-btn endpoint-pill" id="copy-widget-url-btn" type="button" title="Salin tag script widget">
           <span class="code-tag">&lt;/&gt; kaigobiz.js</span>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -480,6 +487,47 @@
         </div>
       </div>
     </section>
+  </div>
+
+  <!-- In-Page API Key Configuration Modal -->
+  <div class="modal-backdrop" id="api-key-modal" role="dialog" aria-modal="true" aria-labelledby="api-key-modal-title" aria-hidden="true" hidden>
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title" id="api-key-modal-title">Konfigurasi API Key</h2>
+          <p class="modal-subtitle" id="api-key-modal-subtitle">Masukkan KAIGOBIZ_API_KEY untuk mengakses endpoint admin dan mutasi.</p>
+        </div>
+        <button type="button" class="modal-close-btn" id="api-key-modal-close" aria-label="Tutup dialog">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-inline-status" id="api-key-modal-status" role="status" aria-live="polite" hidden></div>
+
+      <form id="api-key-modal-form" class="modal-body" novalidate>
+        <div class="field-block">
+          <label for="api-key-modal-input">KAIGOBIZ_API_KEY</label>
+          <div class="api-key-input-row">
+            <input type="password" id="api-key-modal-input" placeholder="kgb_..." autocomplete="off" spellcheck="false" />
+            <button type="button" class="input-inline-btn" id="api-key-toggle-vis" aria-label="Tampilkan atau sembunyikan API Key">Lihat</button>
+          </div>
+          <p class="modal-hint">
+            Nilai kunci tersimpan pada file <code>.env</code> server dan hanya disimpan di <code>sessionStorage</code> browser. Untuk akses lokal tanpa API key, setel <code>KAIGOBIZ_DISABLE_AUTH=true</code> di <code>.env</code>.
+          </p>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn danger-outline small" id="api-key-clear-btn">Hapus Kunci</button>
+          <div class="modal-actions-right">
+            <button type="button" class="btn outline small" id="api-key-cancel-btn">Batal</button>
+            <button type="submit" class="btn primary small" id="api-key-save-btn">Simpan &amp; Terapkan</button>
+          </div>
+        </div>
+      </form>
+    </div>
   </div>
 
   <!-- Global Toast Notification -->

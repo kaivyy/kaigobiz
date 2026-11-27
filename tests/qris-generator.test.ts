@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateDynamicQRIS, calculateCRC16, generateQRCodeDataURL } from '../src/core/qris-generator';
+import { generateDynamicQRIS, calculateCRC16, generateQRCodeDataURL, inspectQRIS } from '../src/core/qris-generator';
 
 describe('QRIS Generator', () => {
   describe('calculateCRC16', () => {
@@ -59,6 +59,25 @@ describe('QRIS Generator', () => {
       const qrisString = '0002010102125802ID5913MERCHANT NAME6007JAKARTA54055000063041234';
       const dataUrl = await generateQRCodeDataURL(qrisString);
       expect(dataUrl).toMatch(/^data:image\/png;base64,/);
+    });
+  });
+
+  describe('inspectQRIS & UTF-8 CRC16', () => {
+    it('should compute consistent UTF-8 CRC16 for multi-byte merchant names', () => {
+      const base = '0002010102115802ID5905CAFÉ6007JAKARTA';
+      // Fix length tag for UTF-8 CAFÉ (5 bytes: C A F \xc3 \x89)
+      const validRaw = '0002010102115802ID5905CAF\u00c96007JAKARTA6304';
+      const withCrc = validRaw + calculateCRC16(validRaw);
+      const dynamic = generateDynamicQRIS(withCrc, 12500);
+      const parsed = inspectQRIS(dynamic);
+      expect(parsed.isValid).toBe(true);
+      expect(parsed.merchantName).toBe('CAFÉ');
+      expect(parsed.amount).toBe(12500);
+    });
+
+    it('should reject invalid checksums and XSS characters', () => {
+      expect(inspectQRIS('0002010102115802ID5904TEST6007JAKARTA63040000').isValid).toBe(false);
+      expect(inspectQRIS('0002010102115802ID5908<script>6007JAKARTA6304ABCD').isValid).toBe(false);
     });
   });
 });

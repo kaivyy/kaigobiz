@@ -196,5 +196,70 @@ describe('SqliteStorageAdapter', () => {
       diskStorage.close();
       fs.rmSync(tempDir, { recursive: true, force: true });
     });
+
+    it('should prevent zombie session resurrection after clearSession', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kaigobiz-zombie-test-'));
+      const dbFile = path.join(tempDir, 'test.db');
+      fs.writeFileSync(
+        path.join(tempDir, '.kaigobiz-session.json'),
+        JSON.stringify({ access_token: 'stale_tok', refresh_token: 'stale_ref' })
+      );
+
+      const db1 = new SqliteStorageAdapter({ dbPath: dbFile, jsonBaseDir: tempDir, autoMigrateJson: true });
+      expect((await db1.getSession())?.access_token).toBe('stale_tok');
+      await db1.clearSession();
+      expect(await db1.getSession()).toBeNull();
+      db1.close();
+
+      // Re-opening must not re-import stale JSON after logout
+      const db2 = new SqliteStorageAdapter({ dbPath: dbFile, jsonBaseDir: tempDir, autoMigrateJson: true });
+      expect(await db2.getSession()).toBeNull();
+      db2.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('should claim PAID order atomically and prevent downgrading SUCCESS callbacks', async () => {
+      const orderA = {
+        paymentId: 'pay_atomic_a',
+        orderId: 'ORD-ATOMIC-A',
+        amount: 31000,
+        status: 'PENDING' as const,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+        qrisString: '000201...',
+      };
+      const orderB = {
+        paymentId: 'pay_atomic_b',
+        orderId: 'ORD-ATOMIC-B',
+        amount: 31000,
+        status: 'PENDING' as const,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+        qrisString: '000201...',
+      };
+      await storage.savePaymentOrder(orderA);
+      await storage.savePaymentOrder(orderB);
+
+      const paidAt = new Date().toISOString();
+      const [c1, c2] = await Promise.all([
+        storage.markOrderPaidIfPending('pay_atomic_a', 'tx_shared_1', paidAt),
+        storage.markOrderPaidIfPending('pay_atomic_a', 'tx_shared_1', paidAt),
+      ]);
+      expect(Number(c1) + Number(c2)).toBe(1);
+
+      // Unique transaction index prevents second order from claiming same tx
+      const claimedB = await storage.markOrderPaidIfPending('pay_atomic_b', 'tx_shared_1', paidAt);
+      expect(claimedB).toBe(false);
+
+      await storage.updateOrderCallbackStatus('pay_atomic_a', 'SUCCESS', paidAt, false);
+      await storage.updateOrderCallbackStatus('pay_atomic_a', 'FAILED', new Date().toISOString(), true);
+      const savedA = await storage.getPaymentOrder('pay_atomic_a');
+      expect(savedA?.callbackStatus).toBe('SUCCESS');
+
+      await storage.setConfig({ staticQrisTemplate: 'tmpl_1', webhookUrl: 'https://example.com/wh' });
+      const cfg = await storage.getConfig();
+      expect(cfg.staticQrisTemplate).toBe('tmpl_1');
+      expect(cfg.webhookUrl).toBe('https://example.com/wh');
+    });
   });
 });
